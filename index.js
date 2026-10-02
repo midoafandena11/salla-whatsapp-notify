@@ -219,20 +219,4 @@ app.post('/webhooks', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));or('form') || document.body;
-            target.appendChild(btn);
-          });
-      }
-
-      setInterval(initWhatsAppBtn, 1200);
-    })();
-  `);
-});
-
-// 7. Webhooks
-app.post('/webhooks', (req, res) => {
-  res.status(200).send('OK');
-});
-
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
