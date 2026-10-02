@@ -46,7 +46,7 @@ app.get('/auth/callback', async (req, res) => {
         accessToken: access_token,
         refreshToken: refresh_token,
         phone: '',
-        message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+        message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
       };
     } else {
       storesDatabase[storeId].accessToken = access_token;
@@ -81,12 +81,12 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - واجهة محسنة مع أزرار إضافة الأقواس
+// 3. لوحة التحكم - واجهة بسيطة ومباشرة جداً للتاجر
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
     phone: '',
-    message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+    message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
   };
 
   res.send(`
@@ -105,11 +105,8 @@ app.get('/dashboard', (req, res) => {
         label { display: block; margin-top: 20px; margin-bottom: 8px; font-weight: 700; color: #1e293b; font-size: 15px; }
         input[type="text"], textarea { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; color: #0f172a; outline: none; background: #fff; transition: border-color 0.2s; }
         input[type="text"]:focus, textarea:focus { border-color: #10b981; }
-        textarea { resize: vertical; min-height: 100px; }
+        textarea { resize: vertical; min-height: 90px; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
-        .tags-container { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-        .tag-btn { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: #0f172a; cursor: pointer; transition: all 0.2s; }
-        .tag-btn:hover { background: #10b981; color: #fff; border-color: #10b981; }
         .btn { margin-top: 28px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
         .btn:hover { background: #059669; }
       </style>
@@ -124,31 +121,13 @@ app.get('/dashboard', (req, res) => {
           <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
           <div class="hint">أدخل الرقم بدون علامة (+) مع مفتاح الدولة (مثال: 966 للمملكة العربية السعودية).</div>
           
-          <label>صياغة الرسالة الافتراضية:</label>
-          <textarea id="msgBox" name="message" required>${storeData.message}</textarea>
-          
-          <div class="hint">اضغط على الأزرار التالية لإدراج البيانات تلقائياً بداخل النص:</div>
-          <div class="tags-container">
-            <button type="button" class="tag-btn" onclick="insertTag('{اسم_المنتج}')">+ اسم المنتج</button>
-            <button type="button" class="tag-btn" onclick="insertTag('{رابط_المنتج}')">+ رابط المنتج</button>
-            <button type="button" class="tag-btn" onclick="insertTag('{سعر_المنتج}')">+ سعر المنتج</button>
-          </div>
+          <label>نص الرسالة الترحيبية:</label>
+          <textarea name="message" required>${storeData.message}</textarea>
+          <div class="hint">سيتم إرفاق (اسم المنتج، السعر، ورابط المنتج) تلقائياً في نهاية الرسالة بشكل منظم.</div>
 
           <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
       </div>
-
-      <script>
-        function insertTag(tag) {
-          var textarea = document.getElementById('msgBox');
-          var start = textarea.selectionStart;
-          var end = textarea.selectionEnd;
-          var text = textarea.value;
-          textarea.value = text.substring(0, start) + tag + text.substring(end);
-          textarea.focus();
-          textarea.selectionStart = textarea.selectionEnd = start + tag.length;
-        }
-      </script>
     </body>
     </html>
   `);
@@ -176,12 +155,12 @@ app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || {
     phone: '',
-    message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+    message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
   };
   res.json(data);
 });
 
-// 6. سكربت أوتوماتيكي ذكي (لو التاجر مسح المتغيرات، يضيف الاسم والرابط تلقائياً بالأسفل)
+// 6. سكربت الحقن التلقائي الذكي
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -208,21 +187,13 @@ app.get('/app-script.js', (req, res) => {
             var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
             var price = priceEl ? priceEl.innerText.trim() : '';
 
-            var rawMsg = data.message || 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}';
+            var userMsg = data.message || 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.';
 
-            // لو التاجر حط الكلمات المفتاحية نستبدلها
-            var hasTags = rawMsg.includes('{اسم_المنتج}') || rawMsg.includes('{رابط_المنتج}');
-            var finalMsg = '';
-
-            if (hasTags) {
-              finalMsg = rawMsg
-                .replace(/{اسم_المنتج}/g, title)
-                .replace(/{رابط_المنتج}/g, url)
-                .replace(/{سعر_المنتج}/g, price);
-            } else {
-              // لو التاجر مسح كل الكلمات المفتاحية وكتب كلام من عنده بس، نضيف الاسم والرابط أوتوماتيك تحت كلامه!
-              finalMsg = rawMsg + "\\n" + "المنتج: " + title + "\\n" + "الرابط: " + url;
-            }
+            // تجميل الصياغة وإضافة البيانات تلقائياً بفاصل أسطر ومسافات
+            var finalMsg = userMsg + "\\n\\n" + 
+                           "📦 المنتج: " + title + 
+                           (price ? "\\n💰 السعر: " + price : "") + 
+                           "\\n🔗 الرابط: " + url;
 
             var cleanPhone = data.phone.replace(/[^0-9]/g, '');
             var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(finalMsg);
@@ -233,6 +204,22 @@ app.get('/app-script.js', (req, res) => {
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#fff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px;">أعلمني عند التوفر عبر الواتساب</a>';
 
             var target = document.querySelector('form') || document.body;
+            target.appendChild(btn);
+          });
+      }
+
+      setInterval(initWhatsAppBtn, 1200);
+    })();
+  `);
+});
+
+// 7. Webhooks
+app.post('/webhooks', (req, res) => {
+  res.status(200).send('OK');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));or('form') || document.body;
             target.appendChild(btn);
           });
       }
