@@ -10,12 +10,12 @@ const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
 const storesDatabase = {};
 
-// 1. الصفحة الرئيسية (توجيه تلقائي للإعدادات لتجنب أي أخطاء)
+// 1. الصفحة الرئيسية (توجيه تلقائي للإعدادات)
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
 
-// 2. OAuth Callback (استلام التوهين من سلة)
+// 2. OAuth Callback
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
@@ -41,12 +41,17 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userRes.json();
     const storeId = userData.data.store.id;
 
-    storesDatabase[storeId] = {
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      phone: '01204203587',
-      message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
-    };
+    if (!storesDatabase[storeId]) {
+      storesDatabase[storeId] = {
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        phone: '',
+        message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+      };
+    } else {
+      storesDatabase[storeId].accessToken = access_token;
+      storesDatabase[storeId].refreshToken = refresh_token;
+    }
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}`);
@@ -76,11 +81,11 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - التصميم المطابق بالكامل
+// 3. لوحة التحكم - نفس الشكل الموجود بالصورة تماماً
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
-    phone: '01204203587',
+    phone: '',
     message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
   };
 
@@ -113,7 +118,7 @@ app.get('/dashboard', (req, res) => {
           <input type="hidden" name="store_id" value="${storeId}">
           
           <label>رقم الواتساب الخاص بالمتجر:</label>
-          <input type="text" name="phone" value="${storeData.phone}" placeholder="01204203587" required>
+          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
           <div class="hint">أدخل الرقم بدون علامة (+) مع مفتاح الدولة (مثال: 966 للمملكة العربية السعودية).</div>
           
           <label>صياغة الرسالة الافتراضية:</label>
@@ -149,7 +154,7 @@ app.post('/save-settings', (req, res) => {
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || {
-    phone: '01204203587',
+    phone: '',
     message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
   };
   res.json(data);
