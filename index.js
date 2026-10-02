@@ -81,7 +81,7 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - مع أزرار إضافة المتغيرات بضغطة واحدة
+// 3. لوحة التحكم - واجهة محسنة مع أزرار إضافة الأقواس
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
@@ -108,7 +108,7 @@ app.get('/dashboard', (req, res) => {
         textarea { resize: vertical; min-height: 100px; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
         .tags-container { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-        .tag-btn { background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: #334155; cursor: pointer; transition: all 0.2s; }
+        .tag-btn { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: #0f172a; cursor: pointer; transition: all 0.2s; }
         .tag-btn:hover { background: #10b981; color: #fff; border-color: #10b981; }
         .btn { margin-top: 28px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
         .btn:hover { background: #059669; }
@@ -127,7 +127,7 @@ app.get('/dashboard', (req, res) => {
           <label>صياغة الرسالة الافتراضية:</label>
           <textarea id="msgBox" name="message" required>${storeData.message}</textarea>
           
-          <div class="hint">اضغط على أي زر لإضافة المتغير القائي داخل الرسالة:</div>
+          <div class="hint">اضغط على الأزرار التالية لإدراج البيانات تلقائياً بداخل النص:</div>
           <div class="tags-container">
             <button type="button" class="tag-btn" onclick="insertTag('{اسم_المنتج}')">+ اسم المنتج</button>
             <button type="button" class="tag-btn" onclick="insertTag('{رابط_المنتج}')">+ رابط المنتج</button>
@@ -181,7 +181,7 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 6. سكربت الحقن التلقائي
+// 6. سكربت أوتوماتيكي ذكي (لو التاجر مسح المتغيرات، يضيف الاسم والرابط تلقائياً بالأسفل)
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -208,13 +208,24 @@ app.get('/app-script.js', (req, res) => {
             var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
             var price = priceEl ? priceEl.innerText.trim() : '';
 
-            var msg = (data.message || '')
-              .replace(/{اسم_المنتج}/g, title)
-              .replace(/{رابط_المنتج}/g, url)
-              .replace(/{سعر_المنتج}/g, price);
+            var rawMsg = data.message || 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}';
+
+            // لو التاجر حط الكلمات المفتاحية نستبدلها
+            var hasTags = rawMsg.includes('{اسم_المنتج}') || rawMsg.includes('{رابط_المنتج}');
+            var finalMsg = '';
+
+            if (hasTags) {
+              finalMsg = rawMsg
+                .replace(/{اسم_المنتج}/g, title)
+                .replace(/{رابط_المنتج}/g, url)
+                .replace(/{سعر_المنتج}/g, price);
+            } else {
+              // لو التاجر مسح كل الكلمات المفتاحية وكتب كلام من عنده بس، نضيف الاسم والرابط أوتوماتيك تحت كلامه!
+              finalMsg = rawMsg + "\\n" + "المنتج: " + title + "\\n" + "الرابط: " + url;
+            }
 
             var cleanPhone = data.phone.replace(/[^0-9]/g, '');
-            var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(msg);
+            var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(finalMsg);
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
