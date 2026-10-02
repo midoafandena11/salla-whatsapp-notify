@@ -10,7 +10,12 @@ const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
 const storesDatabase = {};
 
-// 1. OAuth Callback
+// 1. الصفحة الرئيسية (توجيه تلقائي للإعدادات لتجنب أي أخطاء)
+app.get('/', (req, res) => {
+  res.redirect('/dashboard');
+});
+
+// 2. OAuth Callback (استلام التوهين من سلة)
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
@@ -39,8 +44,8 @@ app.get('/auth/callback', async (req, res) => {
     storesDatabase[storeId] = {
       accessToken: access_token,
       refreshToken: refresh_token,
-      phone: '',
-      message: 'أهلاً، أرغب بالاستفسار عن توفر المنتج: {اسم_المنتج}\nالرابط: {رابط_المنتج}'
+      phone: '01204203587',
+      message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
     };
 
     await injectScriptToStore(storeId, access_token);
@@ -71,39 +76,51 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 2. Dashboard
+// 3. لوحة التحكم - التصميم المطابق بالكامل
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
-  const storeData = storesDatabase[storeId] || { phone: '', message: '' };
+  const storeData = storesDatabase[storeId] || {
+    phone: '01204203587',
+    message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+  };
 
   res.send(`
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
       <meta charset="UTF-8">
-      <title>إعدادات تنبيهات الواتساب</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>إعدادات تطبيق التنبيه عبر الواتساب</title>
+      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
       <style>
-        body { font-family: system-ui, sans-serif; background: #f4f6f8; padding: 20px; }
-        .card { max-width: 500px; margin: 30px auto; background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        h2 { color: #2d3748; margin-bottom: 20px; }
-        label { display: block; margin-top: 15px; font-weight: bold; color: #4a5568; }
-        input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #cbd5e0; border-radius: 6px; box-sizing: border-box; }
-        button { margin-top: 20px; width: 100%; background: #25D366; color: #fff; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; }
+        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; }
+        body { background-color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .card { background: #ffffff; width: 100%; max-width: 520px; padding: 32px 28px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.03); }
+        h2 { text-align: center; color: #004d40; margin-top: 0; margin-bottom: 24px; font-size: 22px; font-weight: 700; }
+        label { display: block; margin-top: 20px; margin-bottom: 8px; font-weight: 700; color: #1e293b; font-size: 15px; }
+        input[type="text"], textarea { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; color: #0f172a; outline: none; background: #fff; transition: border-color 0.2s; }
+        input[type="text"]:focus, textarea:focus { border-color: #10b981; }
+        textarea { resize: vertical; min-height: 90px; }
+        .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
+        .btn { margin-top: 28px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #059669; }
       </style>
     </head>
     <body>
       <div class="card">
-        <h2>إعدادات تنبيهات الواتساب</h2>
+        <h2>إعدادات تطبيق التنبيه عبر الواتساب</h2>
         <form action="/save-settings" method="POST">
           <input type="hidden" name="store_id" value="${storeId}">
-          <label>رقم الواتساب (شامل كود الدولة بدون +):</label>
-          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
           
-          <label>نص الرسالة التلقائية:</label>
-          <textarea name="message" rows="4" required>${storeData.message}</textarea>
-          <small style="color:#718096; display:block; margin-top:4px;">المتغيرات المتاحة: {اسم_المنتج} و {رابط_المنتج}</small>
+          <label>رقم الواتساب الخاص بالمتجر:</label>
+          <input type="text" name="phone" value="${storeData.phone}" placeholder="01204203587" required>
+          <div class="hint">أدخل الرقم بدون علامة (+) مع مفتاح الدولة (مثال: 966 للمملكة العربية السعودية).</div>
+          
+          <label>صياغة الرسالة الافتراضية:</label>
+          <textarea name="message" required>${storeData.message}</textarea>
+          <div class="hint">الكلمات التلقائية المستخرجة من المتجر: {اسم_المنتج}، {رابط_المنتج}، {سعر_المنتج}. يمكنك تغيير الصياغة كما تحب.</div>
 
-          <button type="submit">حفظ البيانات</button>
+          <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
       </div>
     </body>
@@ -111,7 +128,7 @@ app.get('/dashboard', (req, res) => {
   `);
 });
 
-// 3. Save Settings
+// 4. حفظ الإعدادات
 app.post('/save-settings', (req, res) => {
   const { store_id, phone, message } = req.body;
   if (!storesDatabase[store_id]) {
@@ -122,20 +139,23 @@ app.post('/save-settings', (req, res) => {
 
   res.send(`
     <script>
-      alert('تم حفظ البيانات بنجاح!');
+      alert('تم حفظ الإعدادات بنجاح!');
       window.location.href = '/dashboard?store_id=${store_id}';
     </script>
   `);
 });
 
-// 4. API for Script
+// 5. API لجلب البيانات من قِبل السكربت
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
-  const data = storesDatabase[storeId] || { phone: '', message: '' };
+  const data = storesDatabase[storeId] || {
+    phone: '01204203587',
+    message: 'أهلاً، أرغب بتوفر منتج : {اسم_المنتج}\nرابط المنتج : {رابط_المنتج}'
+  };
   res.json(data);
 });
 
-// 5. Script File
+// 6. سكربت الحقن التلقائي في متجر سلة
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -166,7 +186,7 @@ app.get('/app-script.js', (req, res) => {
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
             btn.style.cssText = 'margin-top:15px; width:100%; clear:both;';
-            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#25D366; color:#fff; padding:14px; border-radius:8px; font-weight:bold; text-decoration:none; font-size:16px;">أعلمني عند التوفر عبر الواتساب</a>';
+            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#fff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px;">أعلمني عند التوفر عبر الواتساب</a>';
 
             var target = document.querySelector('form') || document.body;
             target.appendChild(btn);
@@ -178,7 +198,7 @@ app.get('/app-script.js', (req, res) => {
   `);
 });
 
-// 6. Webhooks
+// 7. Webhooks
 app.post('/webhooks', (req, res) => {
   res.status(200).send('OK');
 });
