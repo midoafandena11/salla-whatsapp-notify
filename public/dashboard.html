@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إعدادات تطبيق أعلمني عند التوفر</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; padding: 20px; background-color: #f4f6f8; color: #1f2937; margin: 0; }
+        .card { max-width: 500px; margin: 30px auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h2 { color: #004d40; margin-top: 0; font-size: 20px; text-align: center; margin-bottom: 20px; }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-weight: bold; margin-bottom: 8px; font-size: 14px; }
+        input, textarea { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px; outline: none; }
+        input:focus, textarea:focus { border-color: #25D366; }
+        .hint { font-size: 12px; color: #6b7280; margin-top: 6px; line-height: 1.4; }
+        button { width: 100%; background: #25D366; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; margin-top: 10px; transition: background 0.2s; }
+        button:hover { background: #1ebc57; }
+        .status { margin-top: 15px; text-align: center; font-weight: bold; font-size: 14px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>إعدادات تطبيق التنبيه عبر الواتساب</h2>
+        <form id="settingsForm">
+            <div class="form-group">
+                <label for="phone">رقم الواتساب الخاص بالمتجر:</label>
+                <input type="text" id="phone" placeholder="مثال: 966500000000" required>
+                <div class="hint">أدخل الرقم بدون علامة (+) مع مفتاح الدولة (مثال: 966 للمملكة العربية السعودية).</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="template">صياغة الرسالة الافتراضية:</label>
+                <textarea id="template" rows="4">أهلاً، أرغب بتوفر منتج: {اسم_المنتج}&#10;رابط المنتج: {رابط_المنتج}</textarea>
+                <div class="hint">الكلمات التلقائية المستخرجة من المتجر: {اسم_المنتج}، {رابط_المنتج}، {سعر_المنتج}. يمكنك تغيير الصياغة كما تحب.</div>
+            </div>
+
+            <button type="submit">حفظ الإعدادات</button>
+            <div id="statusMsg" class="status"></div>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('settingsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const phone = document.getElementById('phone').value;
+            const template = document.getElementById('template').value;
+            const statusMsg = document.getElementById('statusMsg');
+
+            try {
+                const response = await fetch('/api/save-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, template })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    statusMsg.style.color = '#059669';
+                    statusMsg.innerText = '✅ تم حفظ الإعدادات بنجاح!';
+                    statusMsg.style.display = 'block';
+                }
+            } catch (err) {
+                statusMsg.style.color = '#dc2626';
+                statusMsg.innerText = '❌ حدث خطأ، يرجى المحاولة لاحقاً';
+                statusMsg.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
