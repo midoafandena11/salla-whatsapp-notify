@@ -1,159 +1,194 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
+const axios = require('axios');
 const path = require('path');
-const { Pool } = require('pg');
-
 const app = express();
 
-// تفعيل Cors و BodyParser
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// خدمة الملفات الثابتة من مجلد public (لشاشات HTML لو وجدت)
-app.use(express.static(path.join(__dirname, 'public')));
+// متغيرات البيئة من سلة (تضعها في Render)
+const CLIENT_ID = process.env.SALLA_CLIENT_ID;
+const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
+const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
-// إعداد قاعدة البيانات PostgreSQL
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
+// تخزين مؤقت لبيانات التجار (يفضل لاحقاً استخدام قاعدة بيانات)
+const storesDatabase = {};
 
-// إنشاء الجدول تلقائياً إن لم يكن موجوداً
-const initDB = async () => {
+// 1. رابط الربط والتفويض (OAuth Callback)
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
+
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS store_settings (
-        store_id VARCHAR(255) PRIMARY KEY,
-        phone VARCHAR(50),
-        message TEXT
-      );
-    `);
-    console.log('Database table ready.');
-  } catch (err) {
-    console.error('Error initializing database table:', err);
-  }
-};
-initDB();
+    // طلب Access Token من سلة
+    const response = await axios.post('https://accounts.salla.sa/oauth2/token', {
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      redirect_uri: REDIRECT_URI,
+      code: code
+    });
 
-// 1. مسار إعادة التوجيه OAuth عند تثبيت التطبيق من سلة
-app.get('/auth/callback', (req, res) => {
-  const storeId = req.query.merchant || req.query.store_id || 'default_store';
-  res.redirect(`/dashboard?store_id=${storeId}`);
+    const { access_token, refresh_token } = response.data;
+
+    // جلب معلومات المتجر لمعرفة Store ID
+    const userProfile = await axios.get('https://api.salla.dev/store/v1/user/info', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+
+    const storeId = userProfile.data.data.store.id;
+
+    // حفظ التوكين والتاجر
+    storesDatabase[storeId] = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      phone: '',
+      message: 'أهلاً، أرغب بالاستفسار عن توفر المنتج: {اسم_المنتج}\nالرابط: {رابط_المنتج}'
+    };
+
+    // حاقن السكربت آلياً في المتجر عبر Salla API
+    await injectScriptToStore(storeId, access_token);
+
+    // توجيه التاجر إلى لوحة التحكم
+    res.redirect(`/dashboard?store_id=${storeId}`);
+  } catch (error) {
+    console.error('OAuth Error:', error.response ? error.response.data : error.message);
+    res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة');
+  }
 });
 
-// 2. واجهة لوحة تحكم التاجر (تفتح للتاجر ليكتب رقمه والرسالة)
+// دالة حاقن السكربت تلقائياً في متجر التاجر
+async function injectScriptToStore(storeId, token) {
+  try {
+    await axios.post('https://api.salla.dev/store/v1/script-tokens', {
+      name: 'WhatsApp Notify Script',
+      script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
+      page: 'product'
+    }, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    console.log(`تم حقن السكربت بنجاح للمتجر: ${storeId}`);
+  } catch (err) {
+    console.error('Script Injection Error:', err.response ? err.response.data : err.message);
+  }
+}
+
+// 2. رابط لوحة التحكم للتاجر (Dashboard)
 app.get('/dashboard', (req, res) => {
+  const storeId = req.query.store_id || 'demo';
+  const storeData = storesDatabase[storeId] || { phone: '', message: '' };
+
   res.send(`
     <!DOCTYPE html>
-    <html dir="rtl" lang="ar">
+    <html lang="ar" dir="rtl">
     <head>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>تطبيق أعلمني عند التوفر عبر الواتساب</title>
+      <title>إعدادات تنبيهات الواتساب</title>
+
       <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background: #f4f6f8; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 80vh; margin: 0; }
-        .card { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 100%; max-width: 480px; }
-        h2 { text-align: center; color: #222; margin-top: 0; margin-bottom: 20px; font-size: 20px; }
-        label { display: block; margin-top: 15px; font-weight: 600; color: #444; font-size: 14px; }
-        input, textarea { width: 100%; padding: 12px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 14px; outline: none; }
-        input:focus, textarea:focus { border-color: #25D366; }
-        button { width: 100%; background: #25D366; color: white; border: none; padding: 14px; margin-top: 22px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; transition: background 0.2s; }
+        body { font-family: system-ui, sans-serif; background: #f4f6f8; padding: 20px; }
+        .card { max-width: 500px; margin: 30px auto; background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h2 { color: #2d3748; margin-bottom: 20px; }
+        label { display: block; margin-top: 15px; font-weight: bold; color: #4a5568; }
+        input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #cbd5e0; border-radius: 6px; box-sizing: border-box; }
+        button { margin-top: 20px; width: 100%; background: #25D366; color: #fff; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; }
         button:hover { background: #20ba5a; }
-        .status { margin-top: 15px; text-align: center; font-weight: bold; color: #2e7d32; display: none; background: #e8f5e9; padding: 10px; border-radius: 6px; }
-        .hint { font-size: 12px; color: #777; margin-top: 4px; }
       </style>
     </head>
     <body>
       <div class="card">
-        <h2>إعدادات تنبيهات الواتساب للمتجر</h2>
-        <form id="settingsForm">
-          <label>رقم الواتساب الخاص بك (مستلم الطلبات):</label>
-          <input type="text" id="phone" placeholder="966500000000 أو 201000000000" required />
-          <div class="hint">اكتب الرقم شاملاً الرمز الدولي بدون علامة +</div>
+        <h2>إعدادات تنبيهات الواتساب</h2>
+        <form action="/save-settings" method="POST">
+          <input type="hidden" name="store_id" value="${storeId}">
+          <label>رقم الواتساب (شامل كود الدولة بدون +):</label>
+          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
           
-          <label>نص الرسالة التي سيرسلها العميل لك:</label>
-          <textarea id="message" rows="4" required>أهلاً، أرغب بتوفر منتج: {اسم_المنتج}&#10;رابط المنتج: {رابط_المنتج}</textarea>
-          <div class="hint">يمكنك استخدام المتغيرات: {اسم_المنتج} و {رابط_المنتج}</div>
-          
-          <button type="submit">حفظ الإعدادات</button>
+          <label>نص الرسالة التلقائية:</label>
+          <textarea name="message" rows="4" required>${storeData.message}</textarea>
+          <small style="color:#718096; display:block; margin-top:4px;">المتغيرات المتاحة: {اسم_المنتج} و {رابط_المنتج}</small>
+
+          <button type="submit">حفظ البيانات</button>
         </form>
-        <div id="status" class="status">✅ تم حفظ الإعدادات بنجاح!</div>
       </div>
-
-      <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const storeId = urlParams.get('store_id') || urlParams.get('merchant') || 'default_store';
-
-        // جلب البيانات المسجلة سابقاً للتاجر
-        fetch('/api/get-settings?store_id=' + storeId)
-          .then(res => res.json())
-          .then(data => {
-            if (data.phone) document.getElementById('phone').value = data.phone;
-            if (data.message) document.getElementById('message').value = data.message;
-          });
-
-        // حفظ البيانات في السيرفر
-        document.getElementById('settingsForm').addEventListener('submit', function(e) {
-          e.preventDefault();
-          fetch('/api/save-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              store_id: storeId,
-              phone: document.getElementById('phone').value,
-              message: document.getElementById('message').value
-            })
-          })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              const statusEl = document.getElementById('status');
-              statusEl.style.display = 'block';
-              setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
-            }
-          });
-        });
-      </script>
     </body>
     </html>
   `);
 });
 
-// 3. API يستقبله السيرفر عند حفظ التاجر لإعداداته
-app.post('/api/save-settings', async (req, res) => {
+// 3. حفظ البيانات من لوحة التحكم
+app.post('/save-settings', (req, res) => {
   const { store_id, phone, message } = req.body;
-  try {
-    await pool.query(
-      `INSERT INTO store_settings (store_id, phone, message) 
-       VALUES ($1, $2, $3) 
-       ON CONFLICT (store_id) 
-       DO UPDATE SET phone = $2, message = $3`,
-      [store_id, phone, message]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Save settings error:', err);
-    res.status(500).json({ error: 'خطأ في قاعدة البيانات أثناء الحفظ' });
+  if (!storesDatabase[store_id]) {
+    storesDatabase[store_id] = {};
   }
+  storesDatabase[store_id].phone = phone;
+  storesDatabase[store_id].message = message;
+
+  res.send(`
+    <script>
+      alert('تم حفظ البيانات بنجاح!');
+      window.location.href = '/dashboard?store_id=${store_id}';
+    </script>
+  `);
 });
 
-// 4. API يجلب الإعدادات المخصصة لكل متجر عند فتح العميل لصفحة المنتج
-app.get('/api/get-settings', async (req, res) => {
-  const storeId = req.query.store_id || 'default_store';
-  try {
-    const result = await pool.query('SELECT phone, message FROM store_settings WHERE store_id = $1', [storeId]);
-    if (result.rows.length > 0) {
-      res.json(result.rows[0]);
-    } else {
-      res.json({ phone: '', message: 'أهلاً، أرغب بتوفر منتج: {اسم_المنتج}\nرابط المنتج: {رابط_المنتج}' });
-    }
-  } catch (err) {
-    console.error('Get settings error:', err);
-    res.status(500).json({ error: 'خطأ في جلب البيانات' });
-  }
+// 4. API يستقبله كود السكربت المزروع جوه المتجر جلب الرقم والرسالة
+app.get('/api/get-settings', (req, res) => {
+  const storeId = req.query.store_id;
+  const data = storesDatabase[storeId] || { phone: '', message: '' };
+  res.json(data);
+});
+
+// 5. ملف السكربت الخارجي الديناميكي (app-script.js)
+app.get('/app-script.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(`
+    (function() {
+      function initWhatsAppBtn() {
+        if (document.getElementById('salla-wa-notify-btn')) return;
+
+        var isOutOfStock = Array.from(document.querySelectorAll('*')).some(function(el) {
+          return el.children.length === 0 && el.innerText && el.innerText.trim() === 'نفدت الكمية';
+        });
+
+        if (!isOutOfStock) return;
+
+        var storeId = (typeof salla !== 'undefined' && salla.config) ? salla.config.get("store.id") : "";
+
+        fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (!data.phone) return;
+
+            var title = document.querySelector('h1') ? document.querySelector('h1').innerText.trim() : document.title;
+            var url = window.location.href;
+            var msg = (data.message || '').replace('{اسم_المنتج}', title).replace('{رابط_المنتج}', url);
+            var cleanPhone = data.phone.replace(/[^0-9]/g, '');
+
+            var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(msg);
+
+            var btn = document.createElement('div');
+            btn.id = 'salla-wa-notify-btn';
+            btn.style.cssText = 'margin-top:15px; width:100%; clear:both;';
+            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#25D366; color:#fff; padding:14px; border-radius:8px; font-weight:bold; text-decoration:none; font-size:16px;">أعلمني عند التوفر عبر الواتساب</a>';
+
+            var target = document.querySelector('form') || document.body;
+            target.appendChild(btn);
+          });
+      }
+
+      setInterval(initWhatsAppBtn, 1200);
+    })();
+  `);
+});
+
+// 6. مسار الـ Webhooks
+app.post('/webhooks', (req, res) => {
+  console.log('Webhook Received:', req.body);
+  res.status(200).send('OK');
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
