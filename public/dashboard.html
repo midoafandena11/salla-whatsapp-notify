@@ -40,6 +40,22 @@
     </div>
 
     <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const storeId = urlParams.get('store_id') || 'default_store';
+
+        // جلب الإعدادات الحالية للتاجر عند تحميل الصفحة
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const res = await fetch(`/api/get-settings?storeId=${storeId}`);
+                const data = await res.json();
+                if (data.phone) document.getElementById('phone').value = data.phone;
+                if (data.template) document.getElementById('template').value = data.template;
+            } catch (err) {
+                console.error('فشل في جلب البيانات:', err);
+            }
+        });
+
+        // حفظ الإعدادات
         document.getElementById('settingsForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const phone = document.getElementById('phone').value;
@@ -50,7 +66,7 @@
                 const response = await fetch('/api/save-settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, template })
+                    body: JSON.stringify({ storeId, phone, template })
                 });
 
                 const data = await response.json();
