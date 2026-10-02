@@ -10,7 +10,7 @@ const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
 const storesDatabase = {};
 
-// 1. الصفحة الرئيسية (توجيه تلقائي للإعدادات)
+// 1. الصفحة الرئيسية
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
@@ -81,7 +81,7 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - نفس الشكل الموجود بالصورة تماماً
+// 3. لوحة التحكم - مع أزرار إضافة المتغيرات بضغطة واحدة
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
@@ -105,8 +105,11 @@ app.get('/dashboard', (req, res) => {
         label { display: block; margin-top: 20px; margin-bottom: 8px; font-weight: 700; color: #1e293b; font-size: 15px; }
         input[type="text"], textarea { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; color: #0f172a; outline: none; background: #fff; transition: border-color 0.2s; }
         input[type="text"]:focus, textarea:focus { border-color: #10b981; }
-        textarea { resize: vertical; min-height: 90px; }
+        textarea { resize: vertical; min-height: 100px; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
+        .tags-container { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .tag-btn { background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: #334155; cursor: pointer; transition: all 0.2s; }
+        .tag-btn:hover { background: #10b981; color: #fff; border-color: #10b981; }
         .btn { margin-top: 28px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
         .btn:hover { background: #059669; }
       </style>
@@ -122,12 +125,30 @@ app.get('/dashboard', (req, res) => {
           <div class="hint">أدخل الرقم بدون علامة (+) مع مفتاح الدولة (مثال: 966 للمملكة العربية السعودية).</div>
           
           <label>صياغة الرسالة الافتراضية:</label>
-          <textarea name="message" required>${storeData.message}</textarea>
-          <div class="hint">الكلمات التلقائية المستخرجة من المتجر: {اسم_المنتج}، {رابط_المنتج}، {سعر_المنتج}. يمكنك تغيير الصياغة كما تحب.</div>
+          <textarea id="msgBox" name="message" required>${storeData.message}</textarea>
+          
+          <div class="hint">اضغط على أي زر لإضافة المتغير القائي داخل الرسالة:</div>
+          <div class="tags-container">
+            <button type="button" class="tag-btn" onclick="insertTag('{اسم_المنتج}')">+ اسم المنتج</button>
+            <button type="button" class="tag-btn" onclick="insertTag('{رابط_المنتج}')">+ رابط المنتج</button>
+            <button type="button" class="tag-btn" onclick="insertTag('{سعر_المنتج}')">+ سعر المنتج</button>
+          </div>
 
           <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
       </div>
+
+      <script>
+        function insertTag(tag) {
+          var textarea = document.getElementById('msgBox');
+          var start = textarea.selectionStart;
+          var end = textarea.selectionEnd;
+          var text = textarea.value;
+          textarea.value = text.substring(0, start) + tag + text.substring(end);
+          textarea.focus();
+          textarea.selectionStart = textarea.selectionEnd = start + tag.length;
+        }
+      </script>
     </body>
     </html>
   `);
@@ -150,7 +171,7 @@ app.post('/save-settings', (req, res) => {
   `);
 });
 
-// 5. API لجلب البيانات من قِبل السكربت
+// 5. API لجلب البيانات
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || {
@@ -160,7 +181,7 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 6. سكربت الحقن التلقائي في متجر سلة
+// 6. سكربت الحقن التلقائي
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -183,9 +204,16 @@ app.get('/app-script.js', (req, res) => {
 
             var title = document.querySelector('h1') ? document.querySelector('h1').innerText.trim() : document.title;
             var url = window.location.href;
-            var msg = (data.message || '').replace('{اسم_المنتج}', title).replace('{رابط_المنتج}', url);
-            var cleanPhone = data.phone.replace(/[^0-9]/g, '');
+            
+            var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
+            var price = priceEl ? priceEl.innerText.trim() : '';
 
+            var msg = (data.message || '')
+              .replace(/{اسم_المنتج}/g, title)
+              .replace(/{رابط_المنتج}/g, url)
+              .replace(/{سعر_المنتج}/g, price);
+
+            var cleanPhone = data.phone.replace(/[^0-9]/g, '');
             var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(msg);
 
             var btn = document.createElement('div');
