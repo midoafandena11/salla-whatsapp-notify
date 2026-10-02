@@ -1,44 +1,41 @@
 const express = require('express');
-const axios = require('axios');
-const path = require('path');
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// متغيرات البيئة من سلة (تضعها في Render)
 const CLIENT_ID = process.env.SALLA_CLIENT_ID;
 const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
 const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
-// تخزين مؤقت لبيانات التجار (يفضل لاحقاً استخدام قاعدة بيانات)
 const storesDatabase = {};
 
-// 1. رابط الربط والتفويض (OAuth Callback)
+// 1. OAuth Callback
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
 
   try {
-    // طلب Access Token من سلة
-    const response = await axios.post('https://accounts.salla.sa/oauth2/token', {
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'authorization_code',
-      redirect_uri: REDIRECT_URI,
-      code: code
+    const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        redirect_uri: REDIRECT_URI,
+        code: code
+      })
     });
+    const tokenData = await tokenRes.json();
+    const { access_token, refresh_token } = tokenData;
 
-    const { access_token, refresh_token } = response.data;
-
-    // جلب معلومات المتجر لمعرفة Store ID
-    const userProfile = await axios.get('https://api.salla.dev/store/v1/user/info', {
+    const userRes = await fetch('https://api.salla.dev/store/v1/user/info', {
       headers: { Authorization: `Bearer ${access_token}` }
     });
+    const userData = await userRes.json();
+    const storeId = userData.data.store.id;
 
-    const storeId = userProfile.data.data.store.id;
-
-    // حفظ التوكين والتاجر
     storesDatabase[storeId] = {
       accessToken: access_token,
       refreshToken: refresh_token,
@@ -46,34 +43,35 @@ app.get('/auth/callback', async (req, res) => {
       message: 'أهلاً، أرغب بالاستفسار عن توفر المنتج: {اسم_المنتج}\nالرابط: {رابط_المنتج}'
     };
 
-    // حاقن السكربت آلياً في المتجر عبر Salla API
     await injectScriptToStore(storeId, access_token);
-
-    // توجيه التاجر إلى لوحة التحكم
     res.redirect(`/dashboard?store_id=${storeId}`);
   } catch (error) {
-    console.error('OAuth Error:', error.response ? error.response.data : error.message);
+    console.error('OAuth Error:', error);
     res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة');
   }
 });
 
-// دالة حاقن السكربت تلقائياً في متجر التاجر
 async function injectScriptToStore(storeId, token) {
   try {
-    await axios.post('https://api.salla.dev/store/v1/script-tokens', {
-      name: 'WhatsApp Notify Script',
-      script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
-      page: 'product'
-    }, {
-      headers: { Authorization: `Bearer ${token}` }
+    await fetch('https://api.salla.dev/store/v1/script-tokens', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'WhatsApp Notify Script',
+        script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
+        page: 'product'
+      })
     });
     console.log(`تم حقن السكربت بنجاح للمتجر: ${storeId}`);
   } catch (err) {
-    console.error('Script Injection Error:', err.response ? err.response.data : err.message);
+    console.error('Script Injection Error:', err);
   }
 }
 
-// 2. رابط لوحة التحكم للتاجر (Dashboard)
+// 2. Dashboard
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || { phone: '', message: '' };
@@ -84,7 +82,6 @@ app.get('/dashboard', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <title>إعدادات تنبيهات الواتساب</title>
-
       <style>
         body { font-family: system-ui, sans-serif; background: #f4f6f8; padding: 20px; }
         .card { max-width: 500px; margin: 30px auto; background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
@@ -92,7 +89,6 @@ app.get('/dashboard', (req, res) => {
         label { display: block; margin-top: 15px; font-weight: bold; color: #4a5568; }
         input, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #cbd5e0; border-radius: 6px; box-sizing: border-box; }
         button { margin-top: 20px; width: 100%; background: #25D366; color: #fff; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; }
-        button:hover { background: #20ba5a; }
       </style>
     </head>
     <body>
@@ -115,7 +111,7 @@ app.get('/dashboard', (req, res) => {
   `);
 });
 
-// 3. حفظ البيانات من لوحة التحكم
+// 3. Save Settings
 app.post('/save-settings', (req, res) => {
   const { store_id, phone, message } = req.body;
   if (!storesDatabase[store_id]) {
@@ -132,14 +128,14 @@ app.post('/save-settings', (req, res) => {
   `);
 });
 
-// 4. API يستقبله كود السكربت المزروع جوه المتجر جلب الرقم والرسالة
+// 4. API for Script
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || { phone: '', message: '' };
   res.json(data);
 });
 
-// 5. ملف السكربت الخارجي الديناميكي (app-script.js)
+// 5. Script File
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -182,13 +178,10 @@ app.get('/app-script.js', (req, res) => {
   `);
 });
 
-// 6. مسار الـ Webhooks
+// 6. Webhooks
 app.post('/webhooks', (req, res) => {
-  console.log('Webhook Received:', req.body);
   res.status(200).send('OK');
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
