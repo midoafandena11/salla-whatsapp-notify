@@ -1,20 +1,37 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// السماح بروابط CORS لضمان قراءة السكربت من متجر سلة
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 });
 
+// الاتصال بقاعدة بيانات MongoDB
+const MONGO_URI = process.env.MONGO_URI || 'ضع_رابط_mongodb_هنا';
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
+  .catch(err => console.error('خطأ في الاتصال بقاعدة البيانات:', err));
+
+// تعريف شكل بيانات المتجر في الداتابيز
+const StoreSchema = new mongoose.Schema({
+  storeId: { type: String, required: true, unique: true },
+  accessToken: String,
+  refreshToken: String,
+  phone: { type: String, default: '' },
+  message: { type: String, default: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' }
+});
+
+const Store = mongoose.model('Store', StoreSchema);
+
 const CLIENT_ID = process.env.SALLA_CLIENT_ID;
 const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
 const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
-
-const storesDatabase = {};
 
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
@@ -62,12 +79,15 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userRes.json();
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
 
-    storesDatabase[storeId] = {
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      phone: storesDatabase[storeId]?.phone || '',
-      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-    };
+    // حفظ أو تحديث المتجر في MongoDB
+    await Store.findOneAndUpdate(
+      { storeId: storeId },
+      { 
+        accessToken: access_token,
+        refreshToken: refresh_token 
+      },
+      { upsert: true, new: true }
+    );
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}&installed=true`);
@@ -99,14 +119,18 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 2. لوحة التحكم
-app.get('/dashboard', (req, res) => {
+// 2. لوحة التحكّم
+app.get('/dashboard', async (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
-  const storeData = storesDatabase[storeId] || {
-    phone: '',
-    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-  };
+
+  let storeData = await Store.findOne({ storeId: storeId });
+  if (!storeData) {
+    storeData = {
+      phone: '',
+      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+  }
 
   res.send(`
     <!DOCTYPE html>
@@ -155,47 +179,77 @@ app.get('/dashboard', (req, res) => {
 });
 
 // 3. حفظ الإعدادات
-app.post('/save-settings', (req, res) => {
+app.post('/save-settings', async (req, res) => {
   const { store_id, phone, message } = req.body;
   
-  if (!storesDatabase[store_id]) {
-    storesDatabase[store_id] = {};
-  }
-  storesDatabase[store_id].phone = phone;
-  storesDatabase[store_id].message = message;
+  await Store.findOneAndUpdate(
+    { storeId: store_id },
+    { phone, message },
+    { upsert: true, new: true }
+  );
 
-  storesDatabase['default'] = { phone, message };
+  // حفظ نسخة افتراضية
+  await Store.findOneAndUpdate(
+    { storeId: 'default' },
+    { phone, message },
+    { upsert: true, new: true }
+  );
 
   res.redirect(`/dashboard?store_id=${store_id}&saved=true`);
 });
 
-// 4. API البيانات
-app.get('/api/get-settings', (req, res) => {
+// 4. API البيانات المعدل
+app.get('/api/get-settings', async (req, res) => {
   const storeId = req.query.store_id;
-  const data = storesDatabase[storeId] || storesDatabase['default'] || {
-    phone: '',
-    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-  };
+  let data = await Store.findOne({ storeId: storeId });
+  
+  if (!data) {
+    data = await Store.findOne({ storeId: 'default' });
+  }
+
+  if (!data) {
+    data = {
+      phone: '',
+      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+  }
+
   res.json(data);
 });
 
-// 5. السكربت المضمون بالكامل مع طباعة Console للتأكد
+// 5. السكربت
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
-      console.log("WA Notify Script Loaded Successfully");
-
-      function injectButton() {
+      function checkAndInject() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // البحث المباشر عن مكان الزر بدون قيود تعسفية
-        var targetNode = document.querySelector('salla-add-to-cart-button') || 
-                         document.querySelector('.btn-unavailable') ||
-                         document.querySelector('button[type="submit"]') ||
-                         document.querySelector('.product-details');
+        var isOutOfStock = false;
+        if (typeof salla !== 'undefined' && salla.config) {
+          var productData = salla.config.get('product') || salla.config.get('page.product');
+          if (productData) {
+            if (productData.is_out_of_stock || productData.quantity === 0) {
+              isOutOfStock = true;
+            }
+          }
+        }
 
-        if (!targetNode) return;
+        var outOfStockNode = null;
+        var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-add-to-cart-button');
+        
+        for (var i = 0; i < nodes.length; i++) {
+          var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
+          if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر' || nodes[i].getAttribute('is-out-of-stock') !== null) {
+            if (nodes[i].children.length <= 1 || nodes[i].tagName.toLowerCase() === 'salla-add-to-cart-button') {
+              outOfStockNode = nodes[i];
+              isOutOfStock = true;
+              break;
+            }
+          }
+        }
+
+        if (!isOutOfStock || !outOfStockNode) return;
 
         var storeId = '';
         if (typeof salla !== 'undefined' && salla.config) {
@@ -207,25 +261,25 @@ app.get('/app-script.js', (req, res) => {
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // استخراج اسم المنتج فقط
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
             } else {
-              var h1El = document.querySelector('h1:not(.header-logo)');
-              title = h1El ? h1El.innerText.trim() : document.title;
-              if (title.indexOf('-') !== -1) title = title.split('-')[0].trim();
-              if (title.indexOf('|') !== -1) title = title.split('|')[0].trim();
+              var productTitleEl = document.querySelector('.product-details__title, .product-title, h1:not(.header-logo)');
+              title = productTitleEl ? productTitleEl.innerText.trim() : document.title;
             }
 
             var url = window.location.href;
+            
             var currentPrice = '';
             var originalPrice = '';
 
-            var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through');
-            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price');
+            var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through, [class*="before"]');
+            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price, [class*="price"]:not(.line-through)');
 
-            if (regularPriceEl) originalPrice = regularPriceEl.innerText.trim();
+            if (regularPriceEl) {
+              originalPrice = regularPriceEl.innerText.trim();
+            }
             if (salePriceEl) {
               currentPrice = salePriceEl.innerText.trim();
             } else {
@@ -254,15 +308,24 @@ app.get('/app-script.js', (req, res) => {
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; display: block; position: relative; z-index: 99;';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            targetNode.parentNode.insertBefore(btn, targetNode.nextSibling);
+            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
+            if (container) {
+              container.appendChild(btn);
+            } else {
+              outOfStockNode.insertAdjacentElement('afterend', btn);
+            }
           })
           .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
       }
 
-      setInterval(injectButton, 1000);
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
+      } else {
+        setInterval(checkAndInject, 1000);
+      }
     })();
   `);
 });
