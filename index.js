@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const app = express();
 
 app.use(express.json());
@@ -11,11 +12,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// الاتصال بقاعدة بيانات MongoDB
+const MONGO_URI = process.env.MONGO_URI || 'ضع_رابط_mongodb_هنا';
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
+  .catch(err => console.error('خطأ في الاتصال بقاعدة البيانات:', err));
+
+// تعريف شكل بيانات المتجر في الداتابيز
+const StoreSchema = new mongoose.Schema({
+  storeId: { type: String, required: true, unique: true },
+  accessToken: String,
+  refreshToken: String,
+  phone: { type: String, default: '' },
+  message: { type: String, default: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' }
+});
+
+const Store = mongoose.model('Store', StoreSchema);
+
 const CLIENT_ID = process.env.SALLA_CLIENT_ID;
 const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
 const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
-
-const storesDatabase = {};
 
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
@@ -63,12 +79,15 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userRes.json();
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
 
-    storesDatabase[storeId] = {
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      phone: storesDatabase[storeId]?.phone || '',
-      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-    };
+    // حفظ أو تحديث المتجر في MongoDB
+    await Store.findOneAndUpdate(
+      { storeId: storeId },
+      { 
+        accessToken: access_token,
+        refreshToken: refresh_token 
+      },
+      { upsert: true, new: true }
+    );
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}&installed=true`);
@@ -100,14 +119,18 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 2. لوحة تحكم بدون alert وبواجهة احترافية
-app.get('/dashboard', (req, res) => {
+// 2. لوحة التحكّم
+app.get('/dashboard', async (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
-  const storeData = storesDatabase[storeId] || {
-    phone: '',
-    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-  };
+
+  let storeData = await Store.findOne({ storeId: storeId });
+  if (!storeData) {
+    storeData = {
+      phone: '',
+      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+  }
 
   res.send(`
     <!DOCTYPE html>
@@ -155,32 +178,46 @@ app.get('/dashboard', (req, res) => {
   `);
 });
 
-// 3. حفظ الإعدادات بدون pop-up وبإعادة توجيه سلسة
-app.post('/save-settings', (req, res) => {
+// 3. حفظ الإعدادات
+app.post('/save-settings', async (req, res) => {
   const { store_id, phone, message } = req.body;
   
-  if (!storesDatabase[store_id]) {
-    storesDatabase[store_id] = {};
-  }
-  storesDatabase[store_id].phone = phone;
-  storesDatabase[store_id].message = message;
+  await Store.findOneAndUpdate(
+    { storeId: store_id },
+    { phone, message },
+    { upsert: true, new: true }
+  );
 
-  storesDatabase['default'] = { phone, message };
+  // حفظ نسخة افتراضية
+  await Store.findOneAndUpdate(
+    { storeId: 'default' },
+    { phone, message },
+    { upsert: true, new: true }
+  );
 
   res.redirect(`/dashboard?store_id=${store_id}&saved=true`);
 });
 
 // 4. API البيانات المعدل
-app.get('/api/get-settings', (req, res) => {
+app.get('/api/get-settings', async (req, res) => {
   const storeId = req.query.store_id;
-  const data = storesDatabase[storeId] || storesDatabase['default'] || {
-    phone: '',
-    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-  };
+  let data = await Store.findOne({ storeId: storeId });
+  
+  if (!data) {
+    data = await Store.findOne({ storeId: 'default' });
+  }
+
+  if (!data) {
+    data = {
+      phone: '',
+      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+  }
+
   res.json(data);
 });
 
-// 5. السكربت المحدث كلياً والمحصن لإظهار الزرار فوراً
+// 5. السكربت
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -188,7 +225,6 @@ app.get('/app-script.js', (req, res) => {
       function checkAndInject() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // 1. التحقق عبر كائن سلة القياسي أولاً لحالة الكمية
         var isOutOfStock = false;
         if (typeof salla !== 'undefined' && salla.config) {
           var productData = salla.config.get('product') || salla.config.get('page.product');
@@ -199,7 +235,6 @@ app.get('/app-script.js', (req, res) => {
           }
         }
 
-        // 2. البحث عن عنصر نفدت الكمية في الصفحة
         var outOfStockNode = null;
         var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-add-to-cart-button');
         
@@ -226,7 +261,6 @@ app.get('/app-script.js', (req, res) => {
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // جلب اسم المنتج بدقة تجنباً لجلب اسم المتجر
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
@@ -237,7 +271,6 @@ app.get('/app-script.js', (req, res) => {
 
             var url = window.location.href;
             
-            // جلب السعر والسعر بعد الخصم
             var currentPrice = '';
             var originalPrice = '';
 
