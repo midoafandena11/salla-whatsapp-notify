@@ -5,6 +5,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// السماح لجميع النطاقات بالوصول للسكربت (CORS)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -45,10 +46,12 @@ app.get('/auth/callback', async (req, res) => {
     const userData = userRes.data;
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : 'demo';
 
-    storesDatabase[storeId] = {
-      phone: storesDatabase[storeId]?.phone || '',
-      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-    };
+    if (!storesDatabase[storeId]) {
+      storesDatabase[storeId] = {
+        phone: '',
+        message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+      };
+    }
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}`);
@@ -77,6 +80,7 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
+// لوحة التحكم بتصميمها الأصلي المنسق
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
@@ -91,30 +95,51 @@ app.get('/dashboard', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>إعدادات الواتساب</title>
-      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+      <title>إعدادات التنبيه عبر الواتساب</title>
+      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
       <style>
-        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; }
-        body { background: #f8fafc; padding: 20px; display: flex; justify-content: center; }
-        .card { background: #fff; width: 100%; max-width: 500px; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        h2 { color: #004d40; text-align: center; margin-bottom: 20px; }
-        label { font-weight: bold; display: block; margin-top: 15px; }
-        input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin-top: 5px; }
-        .btn { margin-top: 20px; width: 100%; background: #10b981; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        .msg { background: #d1fae5; color: #065f46; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px; }
+        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; margin: 0; padding: 0; }
+        body { background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+        .card { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 550px; padding: 30px; }
+        .header { text-align: center; margin-bottom: 25px; }
+        .header h2 { color: #004d40; font-size: 22px; margin-bottom: 8px; }
+        .header p { color: #666; font-size: 14px; }
+        .alert-success { background: #d1fae5; color: #065f46; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 20px; font-weight: 500; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: 700; color: #333; margin-bottom: 8px; font-size: 14px; }
+        input[type="text"], textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.3s; }
+        input[type="text"]:focus, textarea:focus { border-color: #10b981; }
+        textarea { height: 100px; resize: vertical; }
+        .hint { font-size: 12px; color: #888; margin-top: 5px; }
+        .btn-submit { width: 100%; background: #10b981; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.3s; }
+        .btn-submit:hover { background: #059669; }
       </style>
     </head>
     <body>
       <div class="card">
-        ${saved ? '<div class="msg">✓ تم حفظ الإعدادات بنجاح!</div>' : ''}
-        <h2>إعدادات التنبيه عبر الواتساب</h2>
+        <div class="header">
+          <h2>تنبيهات الواتساب للمنتجات غير المتوفرة</h2>
+          <p>قم بضبط رقم الواتساب والرسالة التلقائية التي سيرسلها العميل عند طلب المنتج.</p>
+        </div>
+
+        ${saved ? '<div class="alert-success">✓ تم حفظ الإعدادات بنجاح!</div>' : ''}
+
         <form action="/save-settings" method="POST">
           <input type="hidden" name="store_id" value="${storeId}">
-          <label>رقم الواتساب:</label>
-          <input type="text" name="phone" value="${storeData.phone}" placeholder="966500000000" required>
-          <label>الرسالة:</label>
-          <textarea name="message" required>${storeData.message}</textarea>
-          <button type="submit" class="btn">حفظ الإعدادات</button>
+          
+          <div class="form-group">
+            <label for="phone">رقم الواتساب (مع الرمز الدولي بدون +):</label>
+            <input type="text" id="phone" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
+            <div class="hint">اكتب الرقم بترميز الدولة مباشرة مثل 966 أو 20.</div>
+          </div>
+
+          <div class="form-group">
+            <label for="message">نص الرسالة التلقائية:</label>
+            <textarea id="message" name="message" required>${storeData.message}</textarea>
+            <div class="hint">سيتم إرفاق اسم المنتج وسعره ورابطه تلقائياً في نهاية هذه الرسالة.</div>
+          </div>
+
+          <button type="submit" class="btn-submit">حفظ الإعدادات</button>
         </form>
       </div>
     </body>
@@ -138,24 +163,33 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
+// ملف السكربت الذي يتم تنفيذه في متجر سلة
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
-      function runWhatsApp() {
+      function initWhatsAppBtn() {
         if (document.getElementById('salla-wa-notify-btn')) return;
-
-        var bodyText = document.body ? document.body.innerText : '';
-        if (!bodyText.includes('نفدت الكمية') && !bodyText.includes('نفذت الكمية') && !bodyText.includes('غير متوفر')) {
-          return;
-        }
 
         var storeId = (typeof salla !== 'undefined' && salla.config) ? salla.config.get("store.id") : "";
 
         fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
-          .then(function(r) { return r.json(); })
+          .then(function(res) { return res.json(); })
           .then(function(data) {
             if (!data || !data.phone) return;
+
+            // البحث عن العناصر التي تدل على نفاد الكمية
+            var outOfStockEl = null;
+            var elements = document.querySelectorAll('button, div, span, p');
+            for (var i = 0; i < elements.length; i++) {
+              var txt = elements[i].innerText ? elements[i].innerText.trim() : '';
+              if (txt === 'نفدت الكمية' || txt === 'نفذت الكمية' || txt === 'غير متوفر') {
+                outOfStockEl = elements[i];
+                break;
+              }
+            }
+
+            if (!outOfStockEl) return;
 
             var title = document.querySelector('h1') ? document.querySelector('h1').innerText.trim() : document.title;
             var url = window.location.href;
@@ -168,31 +202,22 @@ app.get('/app-script.js', (req, res) => {
             var cleanPhone = data.phone.replace(/[^0-9]/g, '');
             var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(finalMsg);
 
-            var btn = document.createElement('div');
-            btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 20px 0; width: 100%; display: block; z-index: 999999; position: relative;';
-            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:15px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
+            var btnContainer = document.createElement('div');
+            btnContainer.id = 'salla-wa-notify-btn';
+            btnContainer.style.cssText = 'margin: 15px 0; width: 100%; display: block; clear: both; position: relative; z-index: 99;';
+            btnContainer.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background-color:#10b981; color:#ffffff; padding:12px 20px; border-radius:8px; font-weight:bold; text-decoration:none; font-size:15px; width:100%; box-shadow:0 4px 10px rgba(16,185,129,0.2); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            var allBtns = document.querySelectorAll('button, div, span');
-            var inserted = false;
-            for (var i = 0; i < allBtns.length; i++) {
-              var txt = allBtns[i].innerText ? allBtns[i].innerText.trim() : '';
-              if (txt === 'نفدت الكمية' || txt === 'نفذت الكمية' || txt === 'غير متوفر') {
-                allBtns[i].parentNode.insertBefore(btn, allBtns[i].nextSibling);
-                inserted = true;
-                break;
-              }
-            }
-
-            if (!inserted) {
-              var mainForm = document.querySelector('form') || document.body;
-              mainForm.appendChild(btn);
-            }
+            outOfStockEl.parentNode.insertBefore(btnContainer, outOfStockEl.nextSibling);
           })
-          .catch(function(e){ console.error(e); });
+          .catch(function(err) { console.error('WA Fetch Error:', err); });
       }
 
-      setInterval(runWhatsApp, 1000);
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        initWhatsAppBtn();
+      } else {
+        document.addEventListener('DOMContentLoaded', initWhatsAppBtn);
+      }
+      setInterval(initWhatsAppBtn, 2000);
     })();
   `);
 });
