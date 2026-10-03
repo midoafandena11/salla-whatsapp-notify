@@ -10,54 +10,70 @@ const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
 const storesDatabase = {};
 
-// 1. الصفحة الرئيسية
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
 
-// 2. OAuth Callback
+// OAuth Callback - معدل ومحصن
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
-  if (!code) return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
+
+  if (!code) {
+    return res.status(400).send('لم يتم استلام رمز التفويض (code) من سلة');
+  }
 
   try {
+    // إرسال طلب التوكين بالتنسيق الرسمي المطلوب من سلة
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      redirect_uri: REDIRECT_URI,
+      code: code
+    });
+
     const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        redirect_uri: REDIRECT_URI,
-        code: code
-      })
+      headers: { 
+        'Content-Type': 'application/x-www-form-urlencoded' 
+      },
+      body: params.toString()
     });
+
     const tokenData = await tokenRes.json();
-    const { access_token, refresh_token } = tokenData;
 
-    const userRes = await fetch('https://api.salla.dev/store/v1/user/info', {
-      headers: { Authorization: `Bearer ${access_token}` }
-    });
-    const userData = await userRes.json();
-    const storeId = userData.data.store.id;
-
-    if (!storesDatabase[storeId]) {
-      storesDatabase[storeId] = {
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        phone: '',
-        message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-      };
-    } else {
-      storesDatabase[storeId].accessToken = access_token;
-      storesDatabase[storeId].refreshToken = refresh_token;
+    if (!tokenRes.ok || !tokenData.access_token) {
+      console.error('Salla Token Error Response:', tokenData);
+      return res.status(400).send(`فشل الربط مع سلة: ${tokenData.error_description || tokenData.message || 'بيانات الاعتماد غير صحيحة'}`);
     }
+
+    const access_token = tokenData.access_token;
+    const refresh_token = tokenData.refresh_token;
+
+    // جلب معلومات المتجر
+    const userRes = await fetch('https://api.salla.dev/store/v1/user/info', {
+      headers: { 
+        'Authorization': `Bearer ${access_token}`,
+        'Accept': 'application/json'
+      }
+    });
+    
+    const userData = await userRes.json();
+    const storeId = userData.data && userData.data.store ? userData.data.store.id : 'demo';
+
+    storesDatabase[storeId] = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      phone: storesDatabase[storeId]?.phone || '',
+      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}`);
+
   } catch (error) {
-    console.error('OAuth Error:', error);
-    res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة');
+    console.error('OAuth System Error:', error);
+    res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة: ' + error.message);
   }
 });
 
@@ -67,7 +83,8 @@ async function injectScriptToStore(storeId, token) {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       body: JSON.stringify({
         name: 'WhatsApp Notify Script',
@@ -81,7 +98,6 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
@@ -133,7 +149,6 @@ app.get('/dashboard', (req, res) => {
   `);
 });
 
-// 4. حفظ الإعدادات
 app.post('/save-settings', (req, res) => {
   const { store_id, phone, message } = req.body;
   if (!storesDatabase[store_id]) {
@@ -150,7 +165,6 @@ app.post('/save-settings', (req, res) => {
   `);
 });
 
-// 5. API لجلب البيانات
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || {
@@ -160,7 +174,6 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 6. السكربت الذكي الفائق (المعدل للكشف المباشر عن زر "نفدت الكمية")
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -168,7 +181,6 @@ app.get('/app-script.js', (req, res) => {
       function initWhatsAppBtn() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // فحص هل يحتوي أي عنصر بالصفحة على كلمة "نفدت الكمية" أو "غير متوفر"
         var outOfStockEl = null;
         var allElements = document.querySelectorAll('button, div, span, p');
         
@@ -210,7 +222,6 @@ app.get('/app-script.js', (req, res) => {
             btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#fff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 10px rgba(16,185,129,0.2);">أعلمني عند التوفر عبر الواتساب</a>';
 
-            // إدراج الزرار مباشرة فوق أو بعد عنصر "نفدت الكمية"
             var parent = outOfStockEl.closest('.product-form') || outOfStockEl.parentElement;
             if (parent) {
               parent.appendChild(btn);
@@ -225,7 +236,6 @@ app.get('/app-script.js', (req, res) => {
   `);
 });
 
-// 7. Webhooks
 app.post('/webhooks', (req, res) => {
   res.status(200).send('OK');
 });
