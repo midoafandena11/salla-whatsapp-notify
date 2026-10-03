@@ -14,16 +14,15 @@ app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
 
-// OAuth Callback - معدل ومحصن
+// OAuth Callback
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
 
   if (!code) {
-    return res.status(400).send('لم يتم استلام رمز التفويض (code) من سلة');
+    return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
   }
 
   try {
-    // إرسال طلب التوكين بالتنسيق الرسمي المطلوب من سلة
     const params = new URLSearchParams({
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
@@ -34,24 +33,22 @@ app.get('/auth/callback', async (req, res) => {
 
     const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/x-www-form-urlencoded' 
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString()
     });
 
     const tokenData = await tokenRes.json();
 
     if (!tokenRes.ok || !tokenData.access_token) {
-      console.error('Salla Token Error Response:', tokenData);
-      return res.status(400).send(`فشل الربط مع سلة: ${tokenData.error_description || tokenData.message || 'بيانات الاعتماد غير صحيحة'}`);
+      console.error('Salla Token Error:', tokenData);
+      return res.status(400).send(`فشل الربط مع سلة: ${tokenData.error_description || tokenData.message || 'خطأ في الاعتماد'}`);
     }
 
     const access_token = tokenData.access_token;
     const refresh_token = tokenData.refresh_token;
 
-    // جلب معلومات المتجر
-    const userRes = await fetch('https://api.salla.dev/store/v1/user/info', {
+    // جلب معلومات المتجر من الرابط المعتمد الصحيح
+    const userRes = await fetch('https://accounts.salla.sa/oauth2/user/info', {
       headers: { 
         'Authorization': `Bearer ${access_token}`,
         'Accept': 'application/json'
@@ -59,7 +56,7 @@ app.get('/auth/callback', async (req, res) => {
     });
     
     const userData = await userRes.json();
-    const storeId = userData.data && userData.data.store ? userData.data.store.id : 'demo';
+    const storeId = userData.data && userData.data.store ? userData.data.store.id : (userData.data ? userData.data.id : 'demo');
 
     storesDatabase[storeId] = {
       accessToken: access_token,
