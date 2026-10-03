@@ -4,7 +4,6 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// السماح بروابط CORS لضمان قراءة السكربت من متجر سلة
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -180,43 +179,33 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 5. السكربت المضبوط الذي أظهر الزرار واستبعد اسم المتجر
+// 5. السكربت الذكي (يتحقق من المخزون برمجياً بغض النظر عن نص الزر)
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
-      function checkAndInject() {
+      function injectButton() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // 1. البحث عن زر السلة الأساسي أو عنصر نفدت الكمية
-        var outOfStockNode = null;
+        // 1. التحقق من حالة النفاد عبر محرك سلة مباشرة
         var isOutOfStock = false;
-
-        // الفحص عبر كائن سلة المعتمد أولاً
         if (typeof salla !== 'undefined' && salla.config) {
-          var productData = salla.config.get('product') || salla.config.get('page.product');
-          if (productData && (productData.is_out_of_stock || productData.quantity === 0)) {
-            isOutOfStock = true;
-          }
-        }
-
-        // البحث عن العناصر في الصفحة
-        var sallaBtn = document.querySelector('salla-add-to-cart-button');
-        if (sallaBtn) {
-          outOfStockNode = sallaBtn;
-        } else {
-          var nodes = document.querySelectorAll('button, div, span, p');
-          for (var i = 0; i < nodes.length; i++) {
-            var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
-            if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر') {
-              outOfStockNode = nodes[i];
+          var product = salla.config.get('product') || salla.config.get('page.product');
+          if (product) {
+            if (product.is_out_of_stock || product.quantity === 0 || product.status === 'out_of_stock') {
               isOutOfStock = true;
-              break;
             }
           }
         }
 
-        if (!isOutOfStock || !outOfStockNode) return;
+        // 2. تحديد مكون زر إضافة السلة المعتمد لدى سلة
+        var cartComponent = document.querySelector('salla-add-to-cart-button');
+        
+        // إذا لم ينطبق الشرط، لا تقم بإضافة الزر
+        if (!isOutOfStock && !cartComponent) return;
+
+        var targetNode = cartComponent || document.querySelector('.btn-unavailable') || document.querySelector('button[type="submit"]');
+        if (!targetNode) return;
 
         var storeId = '';
         if (typeof salla !== 'undefined' && salla.config) {
@@ -228,28 +217,18 @@ app.get('/app-script.js', (req, res) => {
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // جلب اسم المنتج فقط وبشكل ينظّف اسم المتجر الملحق به
+            // جلب اسم المنتج فقط بدون اسم المتجر
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
             } else {
               var h1El = document.querySelector('h1:not(.header-logo)');
-              if (h1El) {
-                title = h1El.innerText.trim();
-              } else {
-                title = document.title;
-              }
-              // اقتطاع اسم المتجر إذا كان مفصولاً بشرطة (-) أو خط رأسي (|)
-              if (title.indexOf('-') !== -1) {
-                title = title.split('-')[0].trim();
-              } else if (title.indexOf('|') !== -1) {
-                title = title.split('|')[0].trim();
-              }
+              title = h1El ? h1El.innerText.trim() : document.title;
+              if (title.indexOf('-') !== -1) title = title.split('-')[0].trim();
+              if (title.indexOf('|') !== -1) title = title.split('|')[0].trim();
             }
 
             var url = window.location.href;
-            
-            // جلب السعر
             var currentPrice = '';
             var originalPrice = '';
 
@@ -285,24 +264,15 @@ app.get('/app-script.js', (req, res) => {
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; display: block; position: relative; z-index: 99;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
-            if (container) {
-              container.appendChild(btn);
-            } else {
-              outOfStockNode.insertAdjacentElement('afterend', btn);
-            }
+            targetNode.parentNode.insertBefore(btn, targetNode.nextSibling);
           })
-          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
+          .catch(function(err) { console.error("WA Notify Error:", err); });
       }
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
-      } else {
-        setInterval(checkAndInject, 1000);
-      }
+      setInterval(injectButton, 1000);
     })();
   `);
 });
