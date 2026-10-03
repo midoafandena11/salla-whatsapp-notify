@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const app = express();
 
 app.use(express.json());
@@ -31,19 +32,17 @@ app.get('/auth/callback', async (req, res) => {
       code: code
     });
 
-    const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString()
+    const tokenRes = await axios.post('https://accounts.salla.sa/oauth2/token', params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    const tokenData = await tokenRes.json();
-    const access_token = tokenData.access_token;
+    const access_token = tokenRes.data.access_token;
 
-    const userRes = await fetch('https://accounts.salla.sa/oauth2/user/info', {
+    const userRes = await axios.get('https://accounts.salla.sa/oauth2/user/info', {
       headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' }
     });
-    const userData = await userRes.json();
+
+    const userData = userRes.data;
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : 'demo';
 
     storesDatabase[storeId] = {
@@ -55,27 +54,26 @@ app.get('/auth/callback', async (req, res) => {
     res.redirect(`/dashboard?store_id=${storeId}`);
 
   } catch (error) {
-    res.status(500).send('خطأ في التوثيق: ' + error.message);
+    console.error('OAuth Error:', error.response?.data || error.message);
+    res.status(500).send('خطأ في التوثيق: ' + (error.response?.data?.message || error.message));
   }
 });
 
 async function injectScriptToStore(storeId, token) {
   try {
-    await fetch('https://api.salla.dev/store/v1/script-tokens', {
-      method: 'POST',
+    await axios.post('https://api.salla.dev/store/v1/script-tokens', {
+      name: 'WhatsApp Notify Script',
+      script: 'https://salla-whatsapp-notify.onrender.com/app-script.js',
+      page: 'product'
+    }, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        name: 'WhatsApp Notify Script',
-        script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
-        page: 'product'
-      })
+      }
     });
   } catch (err) {
-    console.error(err);
+    console.error('Script Inject Error:', err.response?.data || err.message);
   }
 }
 
@@ -140,13 +138,10 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// السكربت المباشر الفائق
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
-      console.log("WA Notify App Script Loaded Successfully!");
-
       function runWhatsApp() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
@@ -178,7 +173,6 @@ app.get('/app-script.js', (req, res) => {
             btn.style.cssText = 'margin: 20px 0; width: 100%; display: block; z-index: 999999; position: relative;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:15px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            // البحث عن زر نفدت الكمية ووضع الزرار تحته
             var allBtns = document.querySelectorAll('button, div, span');
             var inserted = false;
             for (var i = 0; i < allBtns.length; i++) {
@@ -204,31 +198,6 @@ app.get('/app-script.js', (req, res) => {
 });
 
 app.post('/webhooks', (req, res) => res.status(200).send('OK'));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));m') || outOfStockNode.parentElement;
-            if (container) {
-              container.appendChild(btn);
-            } else {
-              outOfStockNode.insertAdjacentElement('afterend', btn);
-            }
-          })
-          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
-      }
-
-      // تشغيل الفحص التلقائي
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
-      } else {
-        setInterval(checkAndInject, 1000);
-      }
-    })();
-  `);
-});
-
-app.post('/webhooks', (req, res) => {
-  res.status(200).send('OK');
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
