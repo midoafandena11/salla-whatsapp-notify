@@ -179,32 +179,22 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 5. السكربت الذكي (يتحقق من المخزون برمجياً بغض النظر عن نص الزر)
+// 5. السكربت المضمون بالكامل مع طباعة Console للتأكد
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
+      console.log("WA Notify Script Loaded Successfully");
+
       function injectButton() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // 1. التحقق من حالة النفاد عبر محرك سلة مباشرة
-        var isOutOfStock = false;
-        if (typeof salla !== 'undefined' && salla.config) {
-          var product = salla.config.get('product') || salla.config.get('page.product');
-          if (product) {
-            if (product.is_out_of_stock || product.quantity === 0 || product.status === 'out_of_stock') {
-              isOutOfStock = true;
-            }
-          }
-        }
+        // البحث المباشر عن مكان الزر بدون قيود تعسفية
+        var targetNode = document.querySelector('salla-add-to-cart-button') || 
+                         document.querySelector('.btn-unavailable') ||
+                         document.querySelector('button[type="submit"]') ||
+                         document.querySelector('.product-details');
 
-        // 2. تحديد مكون زر إضافة السلة المعتمد لدى سلة
-        var cartComponent = document.querySelector('salla-add-to-cart-button');
-        
-        // إذا لم ينطبق الشرط، لا تقم بإضافة الزر
-        if (!isOutOfStock && !cartComponent) return;
-
-        var targetNode = cartComponent || document.querySelector('.btn-unavailable') || document.querySelector('button[type="submit"]');
         if (!targetNode) return;
 
         var storeId = '';
@@ -217,7 +207,7 @@ app.get('/app-script.js', (req, res) => {
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // جلب اسم المنتج فقط بدون اسم المتجر
+            // استخراج اسم المنتج فقط
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
@@ -269,7 +259,7 @@ app.get('/app-script.js', (req, res) => {
 
             targetNode.parentNode.insertBefore(btn, targetNode.nextSibling);
           })
-          .catch(function(err) { console.error("WA Notify Error:", err); });
+          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
       }
 
       setInterval(injectButton, 1000);
