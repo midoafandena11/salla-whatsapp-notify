@@ -1,11 +1,10 @@
 const express = require('express');
-const axios = require('axios');
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// السماح لجميع النطاقات بالوصول للسكربت (CORS)
+// السماح بروابط CORS لضمان قراءة السكربت من متجر سلة
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -18,11 +17,17 @@ const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
 const storesDatabase = {};
 
-app.get('/', (req, res) => res.redirect('/dashboard'));
+app.get('/', (req, res) => {
+  res.redirect('/dashboard');
+});
 
+// 1. OAuth Callback
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
-  if (!code) return res.status(400).send('لم يتم استلام رمز التفويض');
+
+  if (!code) {
+    return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
+  }
 
   try {
     const params = new URLSearchParams({
@@ -33,58 +38,73 @@ app.get('/auth/callback', async (req, res) => {
       code: code
     });
 
-    const tokenRes = await axios.post('https://accounts.salla.sa/oauth2/token', params.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString()
     });
 
-    const access_token = tokenRes.data.access_token;
+    const tokenData = await tokenRes.json();
 
-    const userRes = await axios.get('https://accounts.salla.sa/oauth2/user/info', {
-      headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' }
-    });
-
-    const userData = userRes.data;
-    const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : 'demo';
-
-    if (!storesDatabase[storeId]) {
-      storesDatabase[storeId] = {
-        phone: '',
-        message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-      };
+    if (!tokenRes.ok || !tokenData.access_token) {
+      return res.status(400).send(`فشل الربط مع سلة: ${tokenData.error_description || tokenData.message}`);
     }
 
+    const access_token = tokenData.access_token;
+    const refresh_token = tokenData.refresh_token;
+
+    const userRes = await fetch('https://accounts.salla.sa/oauth2/user/info', {
+      headers: { 
+        'Authorization': `Bearer ${access_token}`,
+        'Accept': 'application/json'
+      }
+    });
+    
+    const userData = await userRes.json();
+    const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
+
+    storesDatabase[storeId] = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      phone: storesDatabase[storeId]?.phone || '',
+      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+
     await injectScriptToStore(storeId, access_token);
-    res.redirect(`/dashboard?store_id=${storeId}`);
+    res.redirect(`/dashboard?store_id=${storeId}&installed=true`);
 
   } catch (error) {
-    console.error('OAuth Error:', error.response?.data || error.message);
-    res.status(500).send('خطأ في التوثيق: ' + (error.response?.data?.message || error.message));
+    console.error('OAuth System Error:', error);
+    res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة: ' + error.message);
   }
 });
 
 async function injectScriptToStore(storeId, token) {
   try {
-    await axios.post('https://api.salla.dev/store/v1/script-tokens', {
-      name: 'WhatsApp Notify Script',
-      script: 'https://salla-whatsapp-notify.onrender.com/app-script.js',
-      page: 'product'
-    }, {
+    await fetch('https://api.salla.dev/store/v1/script-tokens', {
+      method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
-      }
+      },
+      body: JSON.stringify({
+        name: 'WhatsApp Notify Script',
+        script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
+        page: 'product'
+      })
     });
+    console.log(`تم حقن السكربت بنجاح للمتجر: ${storeId}`);
   } catch (err) {
-    console.error('Script Inject Error:', err.response?.data || err.message);
+    console.error('Script Injection Error:', err);
   }
 }
 
-// لوحة التحكم بتصميمها الأصلي المنسق
+// 2. لوحة تحكم بدون alert وبواجهة احترافية
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
-  const storeData = storesDatabase[storeId] || storesDatabase['default'] || {
+  const storeData = storesDatabase[storeId] || {
     phone: '',
     message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
   };
@@ -95,51 +115,39 @@ app.get('/dashboard', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>إعدادات التنبيه عبر الواتساب</title>
+      <title>إعدادات تطبيق التنبيه عبر الواتساب</title>
       <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
       <style>
-        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; margin: 0; padding: 0; }
-        body { background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
-        .card { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 550px; padding: 30px; }
-        .header { text-align: center; margin-bottom: 25px; }
-        .header h2 { color: #004d40; font-size: 22px; margin-bottom: 8px; }
-        .header p { color: #666; font-size: 14px; }
-        .alert-success { background: #d1fae5; color: #065f46; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 20px; font-weight: 500; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; font-weight: 700; color: #333; margin-bottom: 8px; font-size: 14px; }
-        input[type="text"], textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.3s; }
+        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; }
+        body { background-color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .card { background: #ffffff; width: 100%; max-width: 520px; padding: 32px 28px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.03); position: relative; }
+        h2 { text-align: center; color: #004d40; margin-top: 0; margin-bottom: 24px; font-size: 22px; font-weight: 700; }
+        label { display: block; margin-top: 20px; margin-bottom: 8px; font-weight: 700; color: #1e293b; font-size: 15px; }
+        input[type="text"], textarea { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; color: #0f172a; outline: none; background: #fff; transition: border-color 0.2s; }
         input[type="text"]:focus, textarea:focus { border-color: #10b981; }
-        textarea { height: 100px; resize: vertical; }
-        .hint { font-size: 12px; color: #888; margin-top: 5px; }
-        .btn-submit { width: 100%; background: #10b981; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.3s; }
-        .btn-submit:hover { background: #059669; }
+        textarea { resize: vertical; min-height: 90px; }
+        .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
+        .btn { margin-top: 24px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #059669; }
+        .alert-success { background: #d1fae5; color: #065f46; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500; text-align: center; font-size: 14px; }
       </style>
     </head>
     <body>
       <div class="card">
-        <div class="header">
-          <h2>تنبيهات الواتساب للمنتجات غير المتوفرة</h2>
-          <p>قم بضبط رقم الواتساب والرسالة التلقائية التي سيرسلها العميل عند طلب المنتج.</p>
-        </div>
-
-        ${saved ? '<div class="alert-success">✓ تم حفظ الإعدادات بنجاح!</div>' : ''}
-
+        ${saved ? '<div class="alert-success">✓ تم حفظ الإعدادات بنجاح! يمكنك إغلاق هذه الصفحة الآن.</div>' : ''}
+        <h2>إعدادات تطبيق التنبيه عبر الواتساب</h2>
         <form action="/save-settings" method="POST">
           <input type="hidden" name="store_id" value="${storeId}">
           
-          <div class="form-group">
-            <label for="phone">رقم الواتساب (مع الرمز الدولي بدون +):</label>
-            <input type="text" id="phone" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
-            <div class="hint">اكتب الرقم بترميز الدولة مباشرة مثل 966 أو 20.</div>
-          </div>
+          <label>رقم الواتساب الخاص بالمتجر:</label>
+          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
+          <div class="hint">أدخل الرقم مع مفتاح الدولة بدون (+) (مثال: 966 للمملكة العربية السعودية).</div>
+          
+          <label>نص الرسالة الترحيبية:</label>
+          <textarea name="message" required>${storeData.message}</textarea>
+          <div class="hint">سيتم إضافة اسم المنتج، السعر، والكرابط تلقائياً بأسفل هذه الرسالة.</div>
 
-          <div class="form-group">
-            <label for="message">نص الرسالة التلقائية:</label>
-            <textarea id="message" name="message" required>${storeData.message}</textarea>
-            <div class="hint">سيتم إرفاق اسم المنتج وسعره ورابطه تلقائياً في نهاية هذه الرسالة.</div>
-          </div>
-
-          <button type="submit" class="btn-submit">حفظ الإعدادات</button>
+          <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
       </div>
     </body>
@@ -147,13 +155,24 @@ app.get('/dashboard', (req, res) => {
   `);
 });
 
+// 3. حفظ الإعدادات بدون pop-up وبإعادة توجيه سلسة
 app.post('/save-settings', (req, res) => {
   const { store_id, phone, message } = req.body;
-  storesDatabase[store_id] = { phone, message };
+  
+  // تحديث البيانات لكل المتاجر المسجلة لضمان عدم حدوث mismatch في الـ ID
+  if (!storesDatabase[store_id]) {
+    storesDatabase[store_id] = {};
+  }
+  storesDatabase[store_id].phone = phone;
+  storesDatabase[store_id].message = message;
+
+  // حفظ في الخيار العام الافتراضي تجنباً لاختلاف رقم ID المتجر من السكربت
   storesDatabase['default'] = { phone, message };
+
   res.redirect(`/dashboard?store_id=${store_id}&saved=true`);
 });
 
+// 4. API البيانات المعدل
 app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || storesDatabase['default'] || {
@@ -163,66 +182,86 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// ملف السكربت الذي يتم تنفيذه في متجر سلة
+// 5. السكربت المحدث كلياً والمحصن لإظهار الزرار فوراً
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
     (function() {
-      function initWhatsAppBtn() {
+      function checkAndInject() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        var storeId = (typeof salla !== 'undefined' && salla.config) ? salla.config.get("store.id") : "";
+        // البحث الشامل عن نص نفدت الكمية في كل العناصر
+        var outOfStockNode = null;
+        var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4');
+        
+        for (var i = 0; i < nodes.length; i++) {
+          var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
+          if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر') {
+            // للتأكد أنه العنصر الأصغر المعروض وليس حاوي كبير
+            if (nodes[i].children.length <= 1) {
+              outOfStockNode = nodes[i];
+              break;
+            }
+          }
+        }
+
+        if (!outOfStockNode) return;
+
+        var storeId = '';
+        if (typeof salla !== 'undefined' && salla.config) {
+          storeId = salla.config.get("store.id") || '';
+        }
 
         fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
-          .then(function(res) { return res.json(); })
+          .then(function(r) { return r.json(); })
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // البحث عن العناصر التي تدل على نفاد الكمية
-            var outOfStockEl = null;
-            var elements = document.querySelectorAll('button, div, span, p');
-            for (var i = 0; i < elements.length; i++) {
-              var txt = elements[i].innerText ? elements[i].innerText.trim() : '';
-              if (txt === 'نفدت الكمية' || txt === 'نفذت الكمية' || txt === 'غير متوفر') {
-                outOfStockEl = elements[i];
-                break;
-              }
-            }
-
-            if (!outOfStockEl) return;
-
             var title = document.querySelector('h1') ? document.querySelector('h1').innerText.trim() : document.title;
             var url = window.location.href;
+            
             var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
             var price = priceEl ? priceEl.innerText.trim() : '';
 
             var userMsg = data.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
-            var finalMsg = userMsg + "\\n\\n📦 المنتج: " + title + (price ? "\\n💰 السعر: " + price : "") + "\\n🔗 الرابط: " + url;
+
+            var finalMsg = userMsg + "\\n\\n" + 
+                           "📦 المنتج: " + title + 
+                           (price ? "\\n💰 السعر: " + price : "") + 
+                           "\\n🔗 الرابط: " + url;
 
             var cleanPhone = data.phone.replace(/[^0-9]/g, '');
             var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(finalMsg);
 
-            var btnContainer = document.createElement('div');
-            btnContainer.id = 'salla-wa-notify-btn';
-            btnContainer.style.cssText = 'margin: 15px 0; width: 100%; display: block; clear: both; position: relative; z-index: 99;';
-            btnContainer.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background-color:#10b981; color:#ffffff; padding:12px 20px; border-radius:8px; font-weight:bold; text-decoration:none; font-size:15px; width:100%; box-shadow:0 4px 10px rgba(16,185,129,0.2); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
+            var btn = document.createElement('div');
+            btn.id = 'salla-wa-notify-btn';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
+            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            outOfStockEl.parentNode.insertBefore(btnContainer, outOfStockEl.nextSibling);
+            // مكان الحقن المباشر
+            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
+            if (container) {
+              container.appendChild(btn);
+            } else {
+              outOfStockNode.insertAdjacentElement('afterend', btn);
+            }
           })
-          .catch(function(err) { console.error('WA Fetch Error:', err); });
+          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
       }
 
-      if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        initWhatsAppBtn();
+      // تشغيل الفحص التلقائي
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
       } else {
-        document.addEventListener('DOMContentLoaded', initWhatsAppBtn);
+        setInterval(checkAndInject, 1000);
       }
-      setInterval(initWhatsAppBtn, 2000);
     })();
   `);
 });
 
-app.post('/webhooks', (req, res) => res.status(200).send('OK'));
+app.post('/webhooks', (req, res) => {
+  res.status(200).send('OK');
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
