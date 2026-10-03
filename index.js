@@ -145,7 +145,7 @@ app.get('/dashboard', (req, res) => {
           
           <label>نص الرسالة الترحيبية:</label>
           <textarea name="message" required>${storeData.message}</textarea>
-          <div class="hint">سيتم إضافة اسم المنتج، السعر، والكرابط تلقائياً بأسفل هذه الرسالة.</div>
+          <div class="hint">سيتم إضافة اسم المنتج، السعر، والرابط تلقائياً بأسفل هذه الرسالة.</div>
 
           <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
@@ -261,6 +261,8 @@ app.get('/app-script.js', (req, res) => {
               priceDetails = "\\n💰 السعر الأصلي: " + originalPrice + "\\n🏷️ السعر بعد الخصم: " + currentPrice;
             } else if (currentPrice) {
               priceDetails = "\\n💰 السعر: " + currentPrice;
+            } else if (originalPrice) {
+              priceDetails = "\\n💰 السعر: " + originalPrice;
             }
 
             var finalMsg = userMsg + "\\n\\n" + 
