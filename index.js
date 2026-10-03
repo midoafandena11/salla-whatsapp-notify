@@ -81,7 +81,7 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - صياغة سعودية افتراضية واضحة
+// 3. لوحة التحكم
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
@@ -160,7 +160,7 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 6. سكربت الحقن التلقائي المطور
+// 6. السكربت الذكي الفائق (المعدل للكشف المباشر عن زر "نفدت الكمية")
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -168,11 +168,19 @@ app.get('/app-script.js', (req, res) => {
       function initWhatsAppBtn() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        var isOutOfStock = Array.from(document.querySelectorAll('*')).some(function(el) {
-          return el.children.length === 0 && el.innerText && el.innerText.trim() === 'نفدت الكمية';
-        });
+        // فحص هل يحتوي أي عنصر بالصفحة على كلمة "نفدت الكمية" أو "غير متوفر"
+        var outOfStockEl = null;
+        var allElements = document.querySelectorAll('button, div, span, p');
+        
+        for (var i = 0; i < allElements.length; i++) {
+          var text = allElements[i].innerText ? allElements[i].innerText.trim() : '';
+          if (text === 'نفدت الكمية' || text === 'نفذت الكمية' || text === 'غير متوفر') {
+            outOfStockEl = allElements[i];
+            break;
+          }
+        }
 
-        if (!isOutOfStock) return;
+        if (!outOfStockEl) return;
 
         var storeId = (typeof salla !== 'undefined' && salla.config) ? salla.config.get("store.id") : "";
 
@@ -189,7 +197,6 @@ app.get('/app-script.js', (req, res) => {
 
             var userMsg = data.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
 
-            // تجميع الرسالة بشكل منظم مع سطر فارغ وبيانات المنتج أوتوماتيكياً
             var finalMsg = userMsg + "\\n\\n" + 
                            "📦 المنتج: " + title + 
                            (price ? "\\n💰 السعر: " + price : "") + 
@@ -200,15 +207,20 @@ app.get('/app-script.js', (req, res) => {
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin-top:15px; width:100%; clear:both;';
-            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#fff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px;">أعلمني عند التوفر عبر الواتساب</a>';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box;';
+            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#fff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 10px rgba(16,185,129,0.2);">أعلمني عند التوفر عبر الواتساب</a>';
 
-            var target = document.querySelector('form') || document.body;
-            target.appendChild(btn);
+            // إدراج الزرار مباشرة فوق أو بعد عنصر "نفدت الكمية"
+            var parent = outOfStockEl.closest('.product-form') || outOfStockEl.parentElement;
+            if (parent) {
+              parent.appendChild(btn);
+            } else {
+              outOfStockEl.insertAdjacentElement('afterend', btn);
+            }
           });
       }
 
-      setInterval(initWhatsAppBtn, 1200);
+      setInterval(initWhatsAppBtn, 1000);
     })();
   `);
 });
