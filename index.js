@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -180,76 +181,17 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 5. السكربت المحقون في المتجر
+// 5. تقديم ملف app-script.js بأمان وبدون أي مشاكل Syntax
 app.get('/app-script.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.send(`
-    (function() {
-      function checkAndInject() {
-        if (document.getElementById('salla-wa-notify-btn')) return;
+  res.sendFile(path.join(__dirname, 'app-script.js'));
+});
 
-        var isOutOfStock = false;
-        var outOfStockNode = null;
+app.post('/webhooks', (req, res) => {
+  res.status(200).send('OK');
+});
 
-        if (typeof salla !== 'undefined' && salla.config) {
-          isOutOfStock = salla.config.get("product.is_out_of_stock") === true || 
-                         salla.config.get("product.quantity") === 0;
-        }
-
-        var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-button');
-        for (var i = 0; i < nodes.length; i++) {
-          var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
-          if ((t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر' || t === 'انتهت الكمية') && nodes[i].children.length <= 1) {
-            isOutOfStock = true;
-            outOfStockNode = nodes[i];
-            break;
-          }
-        }
-
-        if (!isOutOfStock) return;
-
-        var storeId = '';
-        if (typeof salla !== 'undefined' && salla.config) {
-          storeId = salla.config.get("store.id") || '';
-        }
-
-        fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
-          .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (!data || !data.phone) return;
-
-            var title = '';
-            if (typeof salla !== 'undefined' && salla.config && salla.config.get("product.name")) {
-              title = salla.config.get("product.name");
-            } else {
-              var titleEl = document.querySelector('h1.product-details__title') || 
-                            document.querySelector('.product-title') || 
-                            document.querySelector('h1');
-              title = titleEl ? titleEl.innerText.trim() : document.title;
-            }
-
-            var price = '';
-            if (typeof salla !== 'undefined' && salla.config && salla.config.get("product.price")) {
-              price = salla.config.get("product.price");
-            } else {
-              var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
-              price = priceEl ? priceEl.innerText.trim().replace(/\\n/g, ' ') : '';
-            }
-
-            var url = window.location.href;
-            var userMsg = data.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
-
-            var finalMsg = userMsg + "\\n\\n" + 
-                           "📦 المنتج: " + title + 
-                           (price ? "\\n💰 السعر: " + price : "") + 
-                           "\\n🔗 الرابط: " + url;
-
-            var cleanPhone = data.phone.replace(/[^0-9]/g, '');
-            var waUrl = "https://wa.me/" + cleanPhone + "?text=" + encodeURIComponent(finalMsg);
-
-            var btn = document.createElement('div');
-            btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));: both; box-sizing: border-box; display: block;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
             var targetContainer = null;
