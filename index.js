@@ -46,7 +46,7 @@ app.get('/auth/callback', async (req, res) => {
         accessToken: access_token,
         refreshToken: refresh_token,
         phone: '',
-        message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
+        message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
       };
     } else {
       storesDatabase[storeId].accessToken = access_token;
@@ -81,12 +81,12 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 3. لوحة التحكم - واجهة بسيطة ومباشرة جداً للتاجر
+// 3. لوحة التحكم - صياغة سعودية افتراضية واضحة
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const storeData = storesDatabase[storeId] || {
     phone: '',
-    message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
+    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
   };
 
   res.send(`
@@ -123,7 +123,7 @@ app.get('/dashboard', (req, res) => {
           
           <label>نص الرسالة الترحيبية:</label>
           <textarea name="message" required>${storeData.message}</textarea>
-          <div class="hint">سيتم إرفاق (اسم المنتج، السعر، ورابط المنتج) تلقائياً في نهاية الرسالة بشكل منظم.</div>
+          <div class="hint">ملاحظة: اسم المنتج، السعر، ورابط المنتج سينضافون تلقائياً أسفل هذه الرسالة عند تحويل العميل للواتساب.</div>
 
           <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
@@ -155,12 +155,12 @@ app.get('/api/get-settings', (req, res) => {
   const storeId = req.query.store_id;
   const data = storesDatabase[storeId] || {
     phone: '',
-    message: 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.'
+    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
   };
   res.json(data);
 });
 
-// 6. سكربت الحقن التلقائي الذكي
+// 6. سكربت الحقن التلقائي المطور
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -187,9 +187,9 @@ app.get('/app-script.js', (req, res) => {
             var priceEl = document.querySelector('.product-price') || document.querySelector('[class*="price"]');
             var price = priceEl ? priceEl.innerText.trim() : '';
 
-            var userMsg = data.message || 'أهلاً، أرغب بتوفر هذا المنتج لديكم عند إتاحته.';
+            var userMsg = data.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
 
-            // تجميل الصياغة وإضافة البيانات تلقائياً بفاصل أسطر ومسافات
+            // تجميع الرسالة بشكل منظم مع سطر فارغ وبيانات المنتج أوتوماتيكياً
             var finalMsg = userMsg + "\\n\\n" + 
                            "📦 المنتج: " + title + 
                            (price ? "\\n💰 السعر: " + price : "") + 
