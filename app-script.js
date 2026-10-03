@@ -5,13 +5,11 @@
     var isOutOfStock = false;
     var outOfStockNode = null;
 
-    // 1. فحص سلة المباشر
     if (typeof salla !== 'undefined' && salla.config) {
       isOutOfStock = salla.config.get("product.is_out_of_stock") === true || 
                      salla.config.get("product.quantity") === 0;
     }
 
-    // 2. فحص النصوص للثيمات المختلفة
     var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-button');
     for (var i = 0; i < nodes.length; i++) {
       var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
@@ -34,7 +32,6 @@
       .then(function(data) {
         if (!data || !data.phone) return;
 
-        // جلب اسم المنتج المباشر
         var title = '';
         if (typeof salla !== 'undefined' && salla.config && salla.config.get("product.name")) {
           title = salla.config.get("product.name");
@@ -45,7 +42,6 @@
           title = titleEl ? titleEl.innerText.trim() : document.title;
         }
 
-        // جلب السعر المباشر
         var price = '';
         if (typeof salla !== 'undefined' && salla.config && salla.config.get("product.price")) {
           price = salla.config.get("product.price");
