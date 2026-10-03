@@ -100,7 +100,7 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 2. لوحة تحكم بدون alert وبواجهة احترافية
+// 2. لوحة التحكم
 app.get('/dashboard', (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
@@ -180,7 +180,7 @@ app.get('/api/get-settings', (req, res) => {
   res.json(data);
 });
 
-// 5. السكربت المحسن والشامل للظهور الفوري وجلب اسم المنتج بدقة
+// 5. السكربت المضبوط الذي أظهر الزرار واستبعد اسم المتجر
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`
@@ -188,26 +188,25 @@ app.get('/app-script.js', (req, res) => {
       function checkAndInject() {
         if (document.getElementById('salla-wa-notify-btn')) return;
 
-        // 1. فحص هل المنتج غير متوفر عبر بيانات سلة
+        // 1. البحث عن زر السلة الأساسي أو عنصر نفدت الكمية
+        var outOfStockNode = null;
         var isOutOfStock = false;
+
+        // الفحص عبر كائن سلة المعتمد أولاً
         if (typeof salla !== 'undefined' && salla.config) {
           var productData = salla.config.get('product') || salla.config.get('page.product');
-          if (productData) {
-            if (productData.is_out_of_stock || productData.quantity === 0) {
-              isOutOfStock = true;
-            }
+          if (productData && (productData.is_out_of_stock || productData.quantity === 0)) {
+            isOutOfStock = true;
           }
         }
 
-        // 2. البحث عن زر السلة الخاص بالمنتج (تجنب الفوتر تماماً)
-        var outOfStockNode = document.querySelector('salla-add-to-cart-button, .btn-unavailable, button[is-out-of-stock]');
-        
-        if (!outOfStockNode) {
-          var nodes = document.querySelectorAll('button, div.btn, span.btn, .product-option');
+        // البحث عن العناصر في الصفحة
+        var sallaBtn = document.querySelector('salla-add-to-cart-button');
+        if (sallaBtn) {
+          outOfStockNode = sallaBtn;
+        } else {
+          var nodes = document.querySelectorAll('button, div, span, p');
           for (var i = 0; i < nodes.length; i++) {
-            // تجاهل أي عنصر يقع داخل الفوتر
-            if (nodes[i].closest('footer') || nodes[i].closest('.store-footer')) continue;
-
             var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
             if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر') {
               outOfStockNode = nodes[i];
@@ -215,8 +214,6 @@ app.get('/app-script.js', (req, res) => {
               break;
             }
           }
-        } else {
-          isOutOfStock = true;
         }
 
         if (!isOutOfStock || !outOfStockNode) return;
@@ -231,25 +228,22 @@ app.get('/app-script.js', (req, res) => {
           .then(function(data) {
             if (!data || !data.phone) return;
 
-            // جلب اسم المنتج الحقيقي واستبعاد اسم المتجر
+            // جلب اسم المنتج فقط وبشكل ينظّف اسم المتجر الملحق به
             var title = '';
-            if (typeof salla !== 'undefined' && salla.config) {
-              title = salla.config.get('product.name') || salla.config.get('page.product.name');
-            }
-            if (!title) {
-              var mainTitle = document.querySelector('.product-details__title, .product-title, h1.product-title, .product-details h1');
-              if (mainTitle) {
-                title = mainTitle.innerText.trim();
+            if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
+              title = salla.config.get('product.name');
+            } else {
+              var h1El = document.querySelector('h1:not(.header-logo)');
+              if (h1El) {
+                title = h1El.innerText.trim();
               } else {
-                var docTitle = document.title;
-                // إزالة اسم المتجر الملتصق بالصفحة بعد الشرطة
-                if (docTitle.indexOf('-') !== -1) {
-                  title = docTitle.split('-')[0].trim();
-                } else if (docTitle.indexOf('|') !== -1) {
-                  title = docTitle.split('|')[0].trim();
-                } else {
-                  title = docTitle.trim();
-                }
+                title = document.title;
+              }
+              // اقتطاع اسم المتجر إذا كان مفصولاً بشرطة (-) أو خط رأسي (|)
+              if (title.indexOf('-') !== -1) {
+                title = title.split('-')[0].trim();
+              } else if (title.indexOf('|') !== -1) {
+                title = title.split('|')[0].trim();
               }
             }
 
@@ -260,7 +254,7 @@ app.get('/app-script.js', (req, res) => {
             var originalPrice = '';
 
             var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through');
-            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price, [class*="price"]:not(.line-through)');
+            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price');
 
             if (regularPriceEl) originalPrice = regularPriceEl.innerText.trim();
             if (salePriceEl) {
@@ -294,9 +288,11 @@ app.get('/app-script.js', (req, res) => {
             btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            // إدراج الزر مباشرة بعد زر نفدت الكمية أو في الحاوية الأقرب له
-            if (outOfStockNode.parentNode) {
-              outOfStockNode.parentNode.insertBefore(btn, outOfStockNode.nextSibling);
+            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
+            if (container) {
+              container.appendChild(btn);
+            } else {
+              outOfStockNode.insertAdjacentElement('afterend', btn);
             }
           })
           .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
