@@ -5,27 +5,31 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// السماح بروابط CORS لضمان قراءة السكربت من متجر سلة
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 });
 
-// الاتصال بقاعدة بيانات MongoDB
-const MONGO_URI = process.env.MONGO_URI || 'ضع_رابط_mongodb_هنا';
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
-  .catch(err => console.error('خطأ في الاتصال بقاعدة البيانات:', err));
+// الاتصال بقاعدة البيانات MongoDB مع التأكد من الربط
+const MONGO_URI = process.env.MONGO_URI;
 
-// تعريف شكل بيانات المتجر في الداتابيز
+if (!MONGO_URI) {
+  console.error('✗ MONGO_URI غير محدد في متغيرات البيئة!');
+} else {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log('✓ تم الاتصال بقاعدة البيانات بنجاح'))
+    .catch(err => console.error('✗ خطأ في الاتصال بقاعدة البيانات:', err));
+}
+
+// تعريف مخطط البيانات (Schema)
 const StoreSchema = new mongoose.Schema({
   storeId: { type: String, required: true, unique: true },
   accessToken: String,
   refreshToken: String,
   phone: { type: String, default: '' },
   message: { type: String, default: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' }
-});
+}, { timestamps: true });
 
 const Store = mongoose.model('Store', StoreSchema);
 
@@ -79,12 +83,11 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userRes.json();
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
 
-    // حفظ أو تحديث المتجر في MongoDB
     await Store.findOneAndUpdate(
       { storeId: storeId },
       { 
         accessToken: access_token,
-        refreshToken: refresh_token 
+        refreshToken: refresh_token
       },
       { upsert: true, new: true }
     );
@@ -119,17 +122,20 @@ async function injectScriptToStore(storeId, token) {
   }
 }
 
-// 2. لوحة التحكّم
+// 2. لوحة التحكم
 app.get('/dashboard', async (req, res) => {
   const storeId = req.query.store_id || 'demo';
   const saved = req.query.saved === 'true';
 
-  let storeData = await Store.findOne({ storeId: storeId });
+  let storeData = null;
+  try {
+    storeData = await Store.findOne({ storeId: storeId });
+  } catch (e) {
+    console.error('Database query error:', e);
+  }
+
   if (!storeData) {
-    storeData = {
-      phone: '',
-      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-    };
+    storeData = { phone: '', message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' };
   }
 
   res.send(`
@@ -182,104 +188,101 @@ app.get('/dashboard', async (req, res) => {
 app.post('/save-settings', async (req, res) => {
   const { store_id, phone, message } = req.body;
   
-  await Store.findOneAndUpdate(
-    { storeId: store_id },
-    { phone, message },
-    { upsert: true, new: true }
-  );
-
-  // حفظ نسخة افتراضية
-  await Store.findOneAndUpdate(
-    { storeId: 'default' },
-    { phone, message },
-    { upsert: true, new: true }
-  );
+  if (store_id) {
+    try {
+      await Store.findOneAndUpdate(
+        { storeId: store_id },
+        { phone: phone, message: message },
+        { upsert: true, new: true }
+      );
+    } catch (e) {
+      console.error('Error saving settings:', e);
+    }
+  }
 
   res.redirect(`/dashboard?store_id=${store_id}&saved=true`);
 });
 
-// 4. API البيانات المعدل
+// 4. API البيانات
 app.get('/api/get-settings', async (req, res) => {
   const storeId = req.query.store_id;
-  let data = await Store.findOne({ storeId: storeId });
   
-  if (!data) {
-    data = await Store.findOne({ storeId: 'default' });
+  if (!storeId) {
+    return res.json({ phone: '', message: '' });
   }
 
-  if (!data) {
-    data = {
-      phone: '',
-      message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-    };
+  try {
+    const storeData = await Store.findOne({ storeId: storeId });
+    if (storeData) {
+      return res.json({ phone: storeData.phone, message: storeData.message });
+    }
+  } catch (e) {
+    console.error('API Fetch Error:', e);
   }
 
-  res.json(data);
+  res.json({ phone: '', message: '' });
 });
 
-// 5. السكربت
+// 5. السكربت المحقون بدون كاش ومع منع التكرار
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   res.send(`
     (function() {
-      function checkAndInject() {
+      var isInjecting = false;
+
+      function injectButton() {
         if (document.getElementById('salla-wa-notify-btn')) return;
+        if (isInjecting) return;
 
-        var isOutOfStock = false;
-        if (typeof salla !== 'undefined' && salla.config) {
-          var productData = salla.config.get('product') || salla.config.get('page.product');
-          if (productData) {
-            if (productData.is_out_of_stock || productData.quantity === 0) {
-              isOutOfStock = true;
-            }
-          }
-        }
+        var targetNode = document.querySelector('salla-add-to-cart-button') || 
+                         document.querySelector('.btn-unavailable') ||
+                         document.querySelector('button[type="submit"]') ||
+                         document.querySelector('.product-details');
 
-        var outOfStockNode = null;
-        var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-add-to-cart-button');
-        
-        for (var i = 0; i < nodes.length; i++) {
-          var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
-          if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر' || nodes[i].getAttribute('is-out-of-stock') !== null) {
-            if (nodes[i].children.length <= 1 || nodes[i].tagName.toLowerCase() === 'salla-add-to-cart-button') {
-              outOfStockNode = nodes[i];
-              isOutOfStock = true;
-              break;
-            }
-          }
-        }
-
-        if (!isOutOfStock || !outOfStockNode) return;
+        if (!targetNode) return;
 
         var storeId = '';
-        if (typeof salla !== 'undefined' && salla.config) {
-          storeId = salla.config.get("store.id") || '';
-        }
+        try {
+          if (typeof salla !== 'undefined' && salla.config) {
+            storeId = salla.config.get('store.id') || salla.config.get('store') || '';
+            if (typeof storeId === 'object' && storeId.id) storeId = storeId.id;
+          }
+        } catch(e) {}
+
+        if (!storeId) return;
+
+        isInjecting = true;
 
         fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
           .then(function(r) { return r.json(); })
           .then(function(data) {
+            isInjecting = false;
+
             if (!data || !data.phone) return;
+            if (document.getElementById('salla-wa-notify-btn')) return;
 
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
             } else {
-              var productTitleEl = document.querySelector('.product-details__title, .product-title, h1:not(.header-logo)');
-              title = productTitleEl ? productTitleEl.innerText.trim() : document.title;
+              var h1El = document.querySelector('h1:not(.header-logo)');
+              title = h1El ? h1El.innerText.trim() : document.title;
+              if (title.indexOf('-') !== -1) title = title.split('-')[0].trim();
+              if (title.indexOf('|') !== -1) title = title.split('|')[0].trim();
             }
 
             var url = window.location.href;
-            
             var currentPrice = '';
             var originalPrice = '';
 
-            var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through, [class*="before"]');
-            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price, [class*="price"]:not(.line-through)');
+            var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through');
+            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price');
 
-            if (regularPriceEl) {
-              originalPrice = regularPriceEl.innerText.trim();
-            }
+            if (regularPriceEl) originalPrice = regularPriceEl.innerText.trim();
             if (salePriceEl) {
               currentPrice = salePriceEl.innerText.trim();
             } else {
@@ -308,24 +311,18 @@ app.get('/app-script.js', (req, res) => {
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; display: block; position: relative; z-index: 99;';
             btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
-            if (container) {
-              container.appendChild(btn);
-            } else {
-              outOfStockNode.insertAdjacentElement('afterend', btn);
-            }
+            targetNode.parentNode.insertBefore(btn, targetNode.nextSibling);
           })
-          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
+          .catch(function(err) {
+            isInjecting = false;
+            console.error("WA Notify Fetch Error:", err);
+          });
       }
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
-      } else {
-        setInterval(checkAndInject, 1000);
-      }
+      setInterval(injectButton, 1000);
     })();
   `);
 });
