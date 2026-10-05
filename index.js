@@ -1,70 +1,113 @@
 const express = require('express');
-const { MongoClient } = require('mongodb');
-const path = require('path');
-
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 1. الاتصال بقاعدة البيانات الدائمة MongoDB
-const MONGO_URI = process.env.MONGODB_URI;
-const DB_NAME = 'salla_whatsapp_app';
-let db, merchantsCollection;
-
-async function connectDB() {
-  if (!MONGO_URI) {
-    console.error('❌ MONGODB_URI غير مضبوط في Render');
-    return;
-  }
-  try {
-    const client = new MongoClient(MONGO_URI);
-    await client.connect();
-    db = client.db(DB_NAME);
-    merchantsCollection = db.collection('merchants');
-    await merchantsCollection.createIndex({ storeId: 1 }, { unique: true });
-    console.log('✓ تم الاتصال بقاعدة البيانات MongoDB بنجاح');
-  } catch (err) {
-    console.error('✗ خطأ أثناء الاتصال بقاعدة البيانات:', err.message);
-  }
-}
-connectDB();
-
-// CORS Headers
+// السماح بروابط CORS لضمان قراءة السكربت من متجر سلة
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 });
 
-// 2. استقبال إشعارات الـ Webhook عند التثبيت
-app.post('/webhook', async (req, res) => {
-  try {
-    const event = req.body;
-    const storeId = event?.merchant || event?.data?.merchant_id;
+const CLIENT_ID = process.env.SALLA_CLIENT_ID;
+const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
+const REDIRECT_URI = 'https://salla-whatsapp-notify.onrender.com/auth/callback';
 
-    if (storeId && merchantsCollection) {
-      await merchantsCollection.updateOne(
-        { storeId: String(storeId) },
-        { 
-          $set: { 
-            storeId: String(storeId),
-            updatedAt: new Date()
-          } 
-        },
-        { upsert: true }
-      );
+const storesDatabase = {};
+
+app.get('/', (req, res) => {
+  res.redirect('/dashboard');
+});
+
+// 1. OAuth Callback
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+
+  if (!code) {
+    return res.status(400).send('لم يتم استلام رمز التفويض من سلة');
+  }
+
+  try {
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      redirect_uri: REDIRECT_URI,
+      code: code
+    });
+
+    const tokenRes = await fetch('https://accounts.salla.sa/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString()
+    });
+
+    const tokenData = await tokenRes.json();
+
+    if (!tokenRes.ok || !tokenData.access_token) {
+      return res.status(400).send(`فشل الربط مع سلة: ${tokenData.error_description || tokenData.message}`);
     }
-    res.status(200).send('Webhook Received');
-  } catch (err) {
-    res.status(500).send('Server Error');
+
+    const access_token = tokenData.access_token;
+    const refresh_token = tokenData.refresh_token;
+
+    const userRes = await fetch('https://accounts.salla.sa/oauth2/user/info', {
+      headers: { 
+        'Authorization': `Bearer ${access_token}`,
+        'Accept': 'application/json'
+      }
+    });
+    
+    const userData = await userRes.json();
+    const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
+
+    storesDatabase[storeId] = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      phone: storesDatabase[storeId]?.phone || '',
+      message: storesDatabase[storeId]?.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+    };
+
+    await injectScriptToStore(storeId, access_token);
+    res.redirect(`/dashboard?store_id=${storeId}&installed=true`);
+
+  } catch (error) {
+    console.error('OAuth System Error:', error);
+    res.status(500).send('حدث خطأ أثناء عملية الربط مع سلة: ' + error.message);
   }
 });
 
-// 3. لوحة تحكم التاجر (تظهر عند فتح التطبيق من منصة سلة)
-app.get('/', async (req, res) => {
-  const storeId = req.query.merchant_id || req.query.store_id || '';
+async function injectScriptToStore(storeId, token) {
+  try {
+    await fetch('https://api.salla.dev/store/v1/script-tokens', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'WhatsApp Notify Script',
+        script: `https://salla-whatsapp-notify.onrender.com/app-script.js`,
+        page: 'product'
+      })
+    });
+    console.log(`تم حقن السكربت بنجاح للمتجر: ${storeId}`);
+  } catch (err) {
+    console.error('Script Injection Error:', err);
+  }
+}
+
+// 2. لوحة تحكم بدون alert وبواجهة احترافية
+app.get('/dashboard', (req, res) => {
+  const storeId = req.query.store_id || 'demo';
+  const saved = req.query.saved === 'true';
+  const storeData = storesDatabase[storeId] || {
+    phone: '',
+    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+  };
 
   res.send(`
     <!DOCTYPE html>
@@ -72,225 +115,159 @@ app.get('/', async (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>إعدادات التنبيه عبر الواتساب</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+      <title>إعدادات تطبيق التنبيه عبر الواتساب</title>
+      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
       <style>
-        body { background-color: #f8f9fa; font-family: system-ui, -apple-system, sans-serif; padding: 30px 15px; }
-        .card { max-width: 600px; margin: 0 auto; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: none; }
-        .btn-success { background-color: #10b981; border: none; padding: 12px; font-weight: bold; border-radius: 8px; }
-        .btn-success:hover { background-color: #059669; }
-        .alert { display: none; border-radius: 8px; }
+        * { box-sizing: border-box; font-family: 'Tajawal', sans-serif; }
+        body { background-color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .card { background: #ffffff; width: 100%; max-width: 520px; padding: 32px 28px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.03); position: relative; }
+        h2 { text-align: center; color: #004d40; margin-top: 0; margin-bottom: 24px; font-size: 22px; font-weight: 700; }
+        label { display: block; margin-top: 20px; margin-bottom: 8px; font-weight: 700; color: #1e293b; font-size: 15px; }
+        input[type="text"], textarea { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; color: #0f172a; outline: none; background: #fff; transition: border-color 0.2s; }
+        input[type="text"]:focus, textarea:focus { border-color: #10b981; }
+        textarea { resize: vertical; min-height: 90px; }
+        .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5; }
+        .btn { margin-top: 24px; width: 100%; background: #10b981; color: #ffffff; border: none; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #059669; }
+        .alert-success { background: #d1fae5; color: #065f46; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500; text-align: center; font-size: 14px; }
       </style>
     </head>
     <body>
-      <div class="card p-4">
-        <h3 class="mb-3 text-center">إعدادات تنبيهات الواتساب 💬</h3>
-        <p class="text-muted text-center mb-4">قم بضبط رقم الواتساب الخاص بمتجرك والرسالة التي سيرسلها العميل عند طلب منتج منتهي.</p>
-        
-        <div id="alertBox" class="alert alert-success"></div>
-
-        <form id="settingsForm">
-          <input type="hidden" id="storeId" value="${storeId}">
+      <div class="card">
+        ${saved ? '<div class="alert-success">✓ تم حفظ الإعدادات بنجاح! يمكنك إغلاق هذه الصفحة الآن.</div>' : ''}
+        <h2>إعدادات تطبيق التنبيه عبر الواتساب</h2>
+        <form action="/save-settings" method="POST">
+          <input type="hidden" name="store_id" value="${storeId}">
           
-          <div class="mb-3">
-            <label class="form-label fw-bold">رقم الواتساب (شامل المفتاح الدولي без +):</label>
-            <input type="text" id="phone" class="form-control" placeholder="966500000000" required>
-            <div class="form-text">مثال للسعودية: 966500000000 | لمصر: 201000000000</div>
-          </div>
+          <label>رقم الواتساب الخاص بالمتجر:</label>
+          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
+          <div class="hint">أدخل الرقم مع مفتاح الدولة بدون (+) (مثال: 966 للمملكة العربية السعودية).</div>
+          
+          <label>نص الرسالة الترحيبية:</label>
+          <textarea name="message" required>${storeData.message}</textarea>
+          <div class="hint">سيتم إضافة اسم المنتج، السعر، والرابط تلقائياً بأسفل هذه الرسالة.</div>
 
-          <div class="mb-3">
-            <label class="form-label fw-bold">نص الرسالة التلقائية:</label>
-            <textarea id="message" class="form-control" rows="3" placeholder="هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج."></textarea>
-          </div>
-
-          <button type="submit" class="btn btn-success w-100">حفظ الإعدادات</button>
+          <button type="submit" class="btn">حفظ الإعدادات</button>
         </form>
       </div>
-
-      <script>
-        const storeId = document.getElementById('storeId').value;
-        
-        if (storeId) {
-          fetch('/api/get-settings?store_id=' + storeId)
-            .then(r => r.json())
-            .then(data => {
-              if (data && data.phone) {
-                document.getElementById('phone').value = data.phone || '';
-                document.getElementById('message').value = data.message || '';
-              }
-            }).catch(e => console.error(e));
-        }
-
-        document.getElementById('settingsForm').addEventListener('submit', function(e) {
-          e.preventDefault();
-          const phone = document.getElementById('phone').value.trim();
-          const message = document.getElementById('message').value.trim();
-          const alertBox = document.getElementById('alertBox');
-
-          fetch('/api/save-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ storeId, phone, message })
-          })
-          .then(r => r.json())
-          .then(data => {
-            if(data.success) {
-              alertBox.className = 'alert alert-success';
-              alertBox.innerText = '✅ تم حفظ الإعدادات بنجاح في قاعدة البيانات!';
-              alertBox.style.display = 'block';
-            } else {
-              alertBox.className = 'alert alert-danger';
-              alertBox.innerText = '❌ ' + (data.error || 'حدث خطأ أثناء الحفظ');
-              alertBox.style.display = 'block';
-            }
-          })
-          .catch(err => {
-            alertBox.className = 'alert alert-danger';
-            alertBox.innerText = '❌ تعذر الاتصال بالسيرفر';
-            alertBox.style.display = 'block';
-          });
-        });
-      </script>
     </body>
     </html>
   `);
 });
 
-// 4. حفظ إعدادات التاجر في MongoDB
-app.post('/api/save-settings', async (req, res) => {
-  try {
-    const { storeId, phone, message } = req.body;
-
-    if (!storeId || !phone) {
-      return res.status(400).json({ success: false, error: 'رقم المتجر ورقم الواتساب مطلوبان' });
-    }
-
-    if (merchantsCollection) {
-      await merchantsCollection.updateOne(
-        { storeId: String(storeId) },
-        {
-          $set: {
-            storeId: String(storeId),
-            phone: phone,
-            message: message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.',
-            updatedAt: new Date()
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    res.json({ success: true, message: 'تم حفظ الإعدادات بنجاح' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'حدث خطأ أثناء الحفظ' });
+// 3. حفظ الإعدادات بدون pop-up وبإعادة توجيه سلسة
+app.post('/save-settings', (req, res) => {
+  const { store_id, phone, message } = req.body;
+  
+  if (!storesDatabase[store_id]) {
+    storesDatabase[store_id] = {};
   }
+  storesDatabase[store_id].phone = phone;
+  storesDatabase[store_id].message = message;
+
+  storesDatabase['default'] = { phone, message };
+
+  res.redirect(`/dashboard?store_id=${store_id}&saved=true`);
 });
 
-// 5. جلب الإعدادات
-app.get('/api/get-settings', async (req, res) => {
-  try {
-    const storeId = req.query.store_id;
-    if (!storeId) return res.status(400).json({ error: 'Store ID required' });
-
-    let merchant = null;
-    if (merchantsCollection) {
-      merchant = await merchantsCollection.findOne({ storeId: String(storeId) });
-    }
-
-    if (!merchant) return res.status(404).json({ error: 'Merchant not found' });
-
-    res.json({
-      phone: merchant.phone,
-      message: merchant.message
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+// 4. API البيانات المعدل
+app.get('/api/get-settings', (req, res) => {
+  const storeId = req.query.store_id;
+  const data = storesDatabase[storeId] || storesDatabase['default'] || {
+    phone: '',
+    message: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+  };
+  res.json(data);
 });
 
-// 6. السكربت المحقون لصفحة المنتج (يظهر فقط عند نفاد الكمية)
+// 5. السكربت المحدث كلياً والمحصن لإظهار الزرار فوراً
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-
   res.send(`
     (function() {
-      var isInjecting = false;
-
-      function injectButton() {
+      function checkAndInject() {
         if (document.getElementById('salla-wa-notify-btn')) return;
-        if (isInjecting) return;
 
-        var storeId = '';
-        try {
-          if (typeof salla !== 'undefined' && salla.config) {
-            storeId = salla.config.get('store.id') || salla.config.get('store') || '';
-            if (typeof storeId === 'object' && storeId.id) storeId = storeId.id;
-          }
-        } catch(e) {}
-
-        if (!storeId) return;
-
-        // الفحص الدقيق لشروط نفاد الكمية
+        // 1. التحقق عبر كائن سلة القياسي أولاً لحالة الكمية
         var isOutOfStock = false;
-
-        try {
-          if (typeof salla !== 'undefined' && salla.config) {
-            var productData = salla.config.get('product');
-            if (productData) {
-              if (productData.is_out_of_stock || productData.quantity === 0 || productData.status === 'out_of_stock') {
-                isOutOfStock = true;
-              }
+        if (typeof salla !== 'undefined' && salla.config) {
+          var productData = salla.config.get('product') || salla.config.get('page.product');
+          if (productData) {
+            if (productData.is_out_of_stock || productData.quantity === 0) {
+              isOutOfStock = true;
             }
           }
-        } catch(e) {}
+        }
 
-        if (!isOutOfStock) {
-          var selectors = ['.btn-unavailable', '.out-of-stock', '.sold-out', 'salla-add-to-cart-button[disabled]'];
-          for (var i = 0; i < selectors.length; i++) {
-            var el = document.querySelector(selectors[i]);
-            if (el && el.offsetParent !== null) {
+        // 2. البحث عن عنصر نفدت الكمية في الصفحة
+        var outOfStockNode = null;
+        var nodes = document.querySelectorAll('button, div, span, p, h1, h2, h3, h4, salla-add-to-cart-button');
+        
+        for (var i = 0; i < nodes.length; i++) {
+          var t = nodes[i].innerText ? nodes[i].innerText.trim() : '';
+          if (t === 'نفدت الكمية' || t === 'نفذت الكمية' || t === 'غير متوفر' || nodes[i].getAttribute('is-out-of-stock') !== null) {
+            if (nodes[i].children.length <= 1 || nodes[i].tagName.toLowerCase() === 'salla-add-to-cart-button') {
+              outOfStockNode = nodes[i];
               isOutOfStock = true;
               break;
             }
           }
         }
 
-        if (!isOutOfStock) return;
+        if (!isOutOfStock || !outOfStockNode) return;
 
-        var targetNode = document.querySelector('salla-add-to-cart-button') || 
-                         document.querySelector('.salla-add-to-cart-button') ||
-                         document.querySelector('.btn-unavailable') ||
-                         document.querySelector('.product-form') ||
-                         document.querySelector('button[type="submit"]');
-
-        if (!targetNode) return;
-
-        isInjecting = true;
+        var storeId = '';
+        if (typeof salla !== 'undefined' && salla.config) {
+          storeId = salla.config.get("store.id") || '';
+        }
 
         fetch('https://salla-whatsapp-notify.onrender.com/api/get-settings?store_id=' + storeId)
           .then(function(r) { return r.json(); })
           .then(function(data) {
-            isInjecting = false;
-
             if (!data || !data.phone) return;
-            if (document.getElementById('salla-wa-notify-btn')) return;
 
+            // جلب اسم المنتج بدقة تجنباً لجلب اسم المتجر
             var title = '';
             if (typeof salla !== 'undefined' && salla.config && salla.config.get('product.name')) {
               title = salla.config.get('product.name');
             } else {
-              var h1El = document.querySelector('h1:not(.header-logo)');
-              title = h1El ? h1El.innerText.trim() : document.title;
+              var productTitleEl = document.querySelector('.product-details__title, .product-title, h1:not(.header-logo)');
+              title = productTitleEl ? productTitleEl.innerText.trim() : document.title;
             }
 
             var url = window.location.href;
+            
+            // جلب السعر والسعر بعد الخصم
+            var currentPrice = '';
+            var originalPrice = '';
+
+            var regularPriceEl = document.querySelector('.price-before, .regular-price, .line-through, [class*="before"]');
+            var salePriceEl = document.querySelector('.product-price, .price-after, .sale-price, [class*="price"]:not(.line-through)');
+
+            if (regularPriceEl) {
+              originalPrice = regularPriceEl.innerText.trim();
+            }
+            if (salePriceEl) {
+              currentPrice = salePriceEl.innerText.trim();
+            } else {
+              var anyPriceEl = document.querySelector('[class*="price"]');
+              if (anyPriceEl) currentPrice = anyPriceEl.innerText.trim();
+            }
+
             var userMsg = data.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
+
+            var priceDetails = '';
+            if (originalPrice && currentPrice && originalPrice !== currentPrice) {
+              priceDetails = "\\n💰 السعر الأصلي: " + originalPrice + "\\n🏷️ السعر بعد الخصم: " + currentPrice;
+            } else if (currentPrice) {
+              priceDetails = "\\n💰 السعر: " + currentPrice;
+            } else if (originalPrice) {
+              priceDetails = "\\n💰 السعر: " + originalPrice;
+            }
 
             var finalMsg = userMsg + "\\n\\n" + 
                            "📦 المنتج: " + title + 
+                           priceDetails + 
                            "\\n🔗 الرابط: " + url;
 
             var cleanPhone = data.phone.replace(/[^0-9]/g, '');
@@ -298,23 +275,31 @@ app.get('/app-script.js', (req, res) => {
 
             var btn = document.createElement('div');
             btn.id = 'salla-wa-notify-btn';
-            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; display: block; z-index: 99;';
-            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; text-align:center; box-shadow: 0 4px 12px rgba(16,185,129,0.3);">أعلمني عند التوفر عبر الواتساب</a>';
+            btn.style.cssText = 'margin: 15px 0; width: 100%; clear: both; box-sizing: border-box; display: block;';
+            btn.innerHTML = '<a href="' + waUrl + '" target="_blank" style="display:flex; align-items:center; justify-content:center; background:#10b981; color:#ffffff; padding:14px; border-radius:10px; font-weight:bold; text-decoration:none; font-size:16px; width:100%; box-shadow: 0 4px 12px rgba(16,185,129,0.3); text-align:center;">أعلمني عند التوفر عبر الواتساب</a>';
 
-            targetNode.parentNode.insertBefore(btn, targetNode.nextSibling);
+            var container = outOfStockNode.closest('form') || outOfStockNode.parentElement;
+            if (container) {
+              container.appendChild(btn);
+            } else {
+              outOfStockNode.insertAdjacentElement('afterend', btn);
+            }
           })
-          .catch(function(err) {
-            isInjecting = false;
-            console.error("WA Notify Error:", err);
-          });
+          .catch(function(err) { console.error("WA Notify Fetch Error:", err); });
       }
 
-      setInterval(injectButton, 1000);
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { setInterval(checkAndInject, 1000); });
+      } else {
+        setInterval(checkAndInject, 1000);
+      }
     })();
   `);
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.post('/webhooks', (req, res) => {
+  res.status(200).send('OK');
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
