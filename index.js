@@ -1,37 +1,39 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// السماح لجميع النطاقات (CORS)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 });
 
-// الاتصال بقاعدة البيانات MongoDB مع التأكد من الربط
 const MONGO_URI = process.env.MONGO_URI;
 
-if (!MONGO_URI) {
-  console.error('✗ MONGO_URI غير محدد في متغيرات البيئة!');
-} else {
-  mongoose.connect(MONGO_URI)
-    .then(() => console.log('✓ تم الاتصال بقاعدة البيانات بنجاح'))
-    .catch(err => console.error('✗ خطأ في الاتصال بقاعدة البيانات:', err));
+// الاتصال المباشر بـ MongoDB عبر MongoDB Driver الافتراضي المدمج
+let db = null;
+let storesCollection = null;
+
+async function connectToMongo() {
+  if (!MONGO_URI) {
+    console.error('✗ MONGO_URI غير محدد في متغيرات البيئة في Render!');
+    return;
+  }
+  try {
+    const { MongoClient } = require('mongodb');
+    const client = new MongoClient(MONGO_URI);
+    await client.connect();
+    db = client.db();
+    storesCollection = db.collection('stores');
+    console.log('✓ تم الاتصال بقاعدة البيانات MongoDB بنجاح');
+  } catch (err) {
+    console.error('✗ خطأ أثناء الاتصال بقاعدة البيانات:', err.message);
+  }
 }
-
-// تعريف مخطط البيانات (Schema)
-const StoreSchema = new mongoose.Schema({
-  storeId: { type: String, required: true, unique: true },
-  accessToken: String,
-  refreshToken: String,
-  phone: { type: String, default: '' },
-  message: { type: String, default: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' }
-}, { timestamps: true });
-
-const Store = mongoose.model('Store', StoreSchema);
+connectToMongo();
 
 const CLIENT_ID = process.env.SALLA_CLIENT_ID;
 const CLIENT_SECRET = process.env.SALLA_CLIENT_SECRET;
@@ -83,14 +85,19 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userRes.json();
     const storeId = userData.data && userData.data.store ? String(userData.data.store.id) : (userData.data ? String(userData.data.id) : 'demo');
 
-    await Store.findOneAndUpdate(
-      { storeId: storeId },
-      { 
-        accessToken: access_token,
-        refreshToken: refresh_token
-      },
-      { upsert: true, new: true }
-    );
+    if (storesCollection) {
+      await storesCollection.updateOne(
+        { storeId: storeId },
+        { 
+          $set: {
+            accessToken: access_token,
+            refreshToken: refresh_token,
+            updatedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+    }
 
     await injectScriptToStore(storeId, access_token);
     res.redirect(`/dashboard?store_id=${storeId}&installed=true`);
@@ -128,10 +135,12 @@ app.get('/dashboard', async (req, res) => {
   const saved = req.query.saved === 'true';
 
   let storeData = null;
-  try {
-    storeData = await Store.findOne({ storeId: storeId });
-  } catch (e) {
-    console.error('Database query error:', e);
+  if (storesCollection) {
+    try {
+      storeData = await storesCollection.findOne({ storeId: storeId });
+    } catch (e) {
+      console.error('Database query error:', e);
+    }
   }
 
   if (!storeData) {
@@ -169,11 +178,11 @@ app.get('/dashboard', async (req, res) => {
           <input type="hidden" name="store_id" value="${storeId}">
           
           <label>رقم الواتساب الخاص بالمتجر:</label>
-          <input type="text" name="phone" value="${storeData.phone}" placeholder="مثال: 966500000000" required>
+          <input type="text" name="phone" value="${storeData.phone || ''}" placeholder="مثال: 966500000000" required>
           <div class="hint">أدخل الرقم مع مفتاح الدولة بدون (+) (مثال: 966 للمملكة العربية السعودية).</div>
           
           <label>نص الرسالة الترحيبية:</label>
-          <textarea name="message" required>${storeData.message}</textarea>
+          <textarea name="message" required>${storeData.message || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'}</textarea>
           <div class="hint">سيتم إضافة اسم المنتج، السعر، والرابط تلقائياً بأسفل هذه الرسالة.</div>
 
           <button type="submit" class="btn">حفظ الإعدادات</button>
@@ -188,12 +197,18 @@ app.get('/dashboard', async (req, res) => {
 app.post('/save-settings', async (req, res) => {
   const { store_id, phone, message } = req.body;
   
-  if (store_id) {
+  if (store_id && storesCollection) {
     try {
-      await Store.findOneAndUpdate(
+      await storesCollection.updateOne(
         { storeId: store_id },
-        { phone: phone, message: message },
-        { upsert: true, new: true }
+        { 
+          $set: { 
+            phone: phone, 
+            message: message,
+            updatedAt: new Date()
+          } 
+        },
+        { upsert: true }
       );
     } catch (e) {
       console.error('Error saving settings:', e);
@@ -207,14 +222,14 @@ app.post('/save-settings', async (req, res) => {
 app.get('/api/get-settings', async (req, res) => {
   const storeId = req.query.store_id;
   
-  if (!storeId) {
+  if (!storeId || !storesCollection) {
     return res.json({ phone: '', message: '' });
   }
 
   try {
-    const storeData = await Store.findOne({ storeId: storeId });
+    const storeData = await storesCollection.findOne({ storeId: storeId });
     if (storeData) {
-      return res.json({ phone: storeData.phone, message: storeData.message });
+      return res.json({ phone: storeData.phone || '', message: storeData.message || '' });
     }
   } catch (e) {
     console.error('API Fetch Error:', e);
@@ -223,7 +238,7 @@ app.get('/api/get-settings', async (req, res) => {
   res.json({ phone: '', message: '' });
 });
 
-// 5. السكربت المحقون بدون كاش ومع منع التكرار
+// 5. السكربت المحقون للزر مع إلغاء الكاش وحماية عدم التكرار
 app.get('/app-script.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
