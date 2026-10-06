@@ -1,13 +1,13 @@
 (function () {
-    function checkAndAddButton() {
-        // إذا كان الزر موجوداً بالفعل لا تكرره
+    function injectButton() {
+        // منع التكرار لو الزر مرسوم قبل كده
         if (document.getElementById('salla-whatsapp-notify-btn')) return;
 
-        // 1. العثور على عنصر زر الشراء الأساسي في سلة
+        // 1. العثور على زر سلة
         const sallaBtn = document.querySelector('salla-add-to-cart-button');
         if (!sallaBtn) return;
 
-        // 2. التحقق هل المنتج "نفدت الكمية" (سواء من الخصائص أو النص الداخلي)
+        // 2. التحقق من حالة "نفدت الكمية"
         const isOutOfStock = 
             sallaBtn.hasAttribute('out-of-stock') || 
             sallaBtn.getAttribute('is-out-of-stock') !== null ||
@@ -18,13 +18,12 @@
             )) ||
             document.body.innerText.includes('نفدت الكمية');
 
-        // إذا كان المنتج متوفراً، لا نفعل شيئاً
+        // لو المنتج متوفر، اخرج وما تعملش حاجة
         if (!isOutOfStock) return;
 
-        // 3. جلب البيانات ورسم الزر فوراً
+        // 3. جلب بيانات التاجر ورسم الزر
         const urlParams = new URLSearchParams(window.location.search);
         let merchantId = urlParams.get('merchant_id');
-        
         if (!merchantId && typeof salla !== 'undefined' && salla.config) {
             merchantId = salla.config.get('store.id');
         }
@@ -73,9 +72,9 @@
 
                 sallaBtn.insertAdjacentElement('afterend', btn);
             })
-            .catch(err => console.error('Fetch settings error:', err));
+            .catch(err => console.error(err));
     }
 
-    // تشغيل الفحص دورياً حتى يتم تحميل عناصر سلة بالكامل
-    setInterval(checkAndAddButton, 1000);
+    // تشغيل الفحص المستمر كل ثانية لضمان لقط عناصر سلة بعد التحميل
+    setInterval(injectButton, 1000);
 })();
