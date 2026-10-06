@@ -4,35 +4,65 @@ const axios = require('axios');
 const path = require('path');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+/* =========================
+   CORS
+========================= */
+
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header(
+        'Access-Control-Allow-Methods',
+        'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+    );
+    res.header(
+        'Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    );
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+
+    next();
+});
+
+/* =========================
+   Middleware
+========================= */
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// الملفات الثابتة
+/* =========================
+   Static Files
+========================= */
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// =========================
-// MongoDB
-// =========================
+/* =========================
+   MongoDB
+========================= */
 
-const mongoURI = process.env.MONGO_URI || process.env.MONGODB_URI;
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
-if (!mongoURI) {
-    console.error('MONGO_URI is not configured.');
+if (!MONGO_URI) {
+    console.error('❌ MONGO_URI is missing');
 } else {
     mongoose
-        .connect(mongoURI)
+        .connect(MONGO_URI)
         .then(() => {
-            console.log('MongoDB Connected Successfully.');
+            console.log('✅ MongoDB connected');
         })
-        .catch((err) => {
-            console.error('MongoDB Connection Error:', err);
+        .catch((error) => {
+            console.error('❌ MongoDB connection error:', error.message);
         });
 }
 
-// =========================
-// Store Model
-// =========================
+/* =========================
+   Store Schema
+========================= */
 
 const storeSchema = new mongoose.Schema(
     {
@@ -60,7 +90,8 @@ const storeSchema = new mongoose.Schema(
 
         customMessage: {
             type: String,
-            default: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+            default:
+                'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
         }
     },
     {
@@ -70,110 +101,129 @@ const storeSchema = new mongoose.Schema(
 
 const Store = mongoose.model('Store', storeSchema);
 
-// =========================
-// Home
-// =========================
+/* =========================
+   Health Check
+========================= */
+
+app.get('/health', async (req, res) => {
+    try {
+        const mongoConnected =
+            mongoose.connection.readyState === 1;
+
+        res.json({
+            success: true,
+            service: 'salla-whatsapp-notify',
+            mongodb: mongoConnected ? 'connected' : 'disconnected'
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/* =========================
+   Home
+========================= */
 
 app.get('/', (req, res) => {
     res.redirect('/dashboard');
 });
 
-// =========================
-// Dashboard
-// =========================
+/* =========================
+   Dashboard
+========================= */
 
 app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    res.sendFile(
+        path.join(__dirname, 'public', 'dashboard.html')
+    );
 });
 
-// =========================
-// Salla OAuth Callback
-// =========================
+/* =========================
+   Salla OAuth Callback
+========================= */
 
 app.get('/auth/callback', async (req, res) => {
-    const { code } = req.query;
-
-    if (!code) {
-        return res.status(400).send(
-            'لم يتم استلام كود المصادقة من سلة.'
-        );
-    }
-
-    const clientId = process.env.SALLA_CLIENT_ID;
-    const clientSecret = process.env.SALLA_CLIENT_SECRET;
-
-    if (!clientId || !clientSecret) {
-        console.error('Salla OAuth credentials are missing.');
-
-        return res.status(500).send(
-            'إعدادات المصادقة مع سلة غير مكتملة على الخادم.'
-        );
-    }
-
     try {
-        // 1. تحويل authorization code إلى access token
-        const tokenResponse = await axios.post(
-            'https://accounts.salla.sa/oauth2/token',
-            new URLSearchParams({
-                client_id: clientId,
-                client_secret: clientSecret,
-                grant_type: 'authorization_code',
-                redirect_uri:
-                    'https://salla-whatsapp-notify.onrender.com/auth/callback',
-                code: String(code)
-            }).toString(),
-            {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            }
-        );
+        const code = req.query.code;
 
-        const {
-            access_token,
-            refresh_token
-        } = tokenResponse.data;
+        if (!code) {
+            return res.status(400).send('Missing OAuth code');
+        }
 
-        if (!access_token) {
+        const clientId = process.env.SALLA_CLIENT_ID;
+        const clientSecret = process.env.SALLA_CLIENT_SECRET;
+
+        if (!clientId || !clientSecret) {
+            console.error('❌ Salla OAuth credentials are missing');
+
             return res.status(500).send(
-                'لم يتم الحصول على Access Token من سلة.'
+                'Salla OAuth configuration is missing'
             );
         }
 
-        // 2. الحصول على بيانات التاجر
-        const userInfoResponse = await axios.get(
-            'https://accounts.salla.sa/oauth2/user/info',
+        /* Exchange code for tokens */
+
+        const tokenResponse = await axios.post(
+            'https://accounts.salla.sa/oauth2/token',
+            {
+                grant_type: 'authorization_code',
+                client_id: clientId,
+                client_secret: clientSecret,
+                code: code
+            },
             {
                 headers: {
-                    Authorization: `Bearer ${access_token}`
+                    'Content-Type': 'application/json'
                 }
             }
         );
 
+        const accessToken =
+            tokenResponse.data.access_token;
+
+        const refreshToken =
+            tokenResponse.data.refresh_token || '';
+
+        /* Get merchant information */
+
+        const userResponse = await axios.get(
+            'https://api.salla.dev/admin/v2/user',
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`
+                }
+            }
+        );
+
+        const userData = userResponse.data?.data || {};
+
         const merchantId =
-            userInfoResponse.data?.data?.merchant?.id ||
-            userInfoResponse.data?.data?.id;
+            userData.merchant?.id ||
+            userData.store?.id ||
+            userData.id;
 
         if (!merchantId) {
             console.error(
-                'Salla user info response:',
-                userInfoResponse.data
+                '❌ Could not determine merchant ID',
+                userData
             );
 
-            return res.status(400).send(
-                'تعذر العثور على معرف المتجر في بيانات سلة.'
+            return res.status(500).send(
+                'Could not determine merchant ID'
             );
         }
 
-        const merchantIdStr = String(merchantId);
+        /* Save store */
 
-        // 3. إنشاء/تحديث المتجر
         await Store.findOneAndUpdate(
-            { merchantId: merchantIdStr },
+            { merchantId: String(merchantId) },
             {
-                merchantId: merchantIdStr,
-                accessToken: access_token,
-                refreshToken: refresh_token || ''
+                merchantId: String(merchantId),
+                accessToken,
+                refreshToken
             },
             {
                 upsert: true,
@@ -183,110 +233,104 @@ app.get('/auth/callback', async (req, res) => {
         );
 
         console.log(
-            `Salla merchant authenticated: ${merchantIdStr}`
+            `✅ Salla store connected: ${merchantId}`
         );
 
-        // 4. الذهاب للوحة التحكم
-        res.redirect(
-            `/dashboard?merchant_id=${encodeURIComponent(merchantIdStr)}`
-        );
+        res.redirect('/dashboard');
 
     } catch (error) {
         console.error(
-            'Salla OAuth Error:',
+            '❌ OAuth error:',
             error.response?.data || error.message
         );
 
         res.status(500).send(
-            'حدث خطأ أثناء المصادقة مع سلة. يرجى المحاولة مرة أخرى.'
+            'Authentication failed. Check Render logs.'
         );
     }
 });
 
-// =========================
-// GET Settings
-// =========================
+/* =========================
+   GET Settings
+========================= */
 
 app.get('/api/settings', async (req, res) => {
-    const merchantId = req.query.merchant_id;
-
-    if (!merchantId) {
-        return res.status(400).json({
-            error: 'مطلوب معرف المتجر merchant_id'
-        });
-    }
-
     try {
+        const merchantId = req.query.merchant_id;
+
+        if (!merchantId) {
+            return res.status(400).json({
+                success: false,
+                error: 'merchant_id is required'
+            });
+        }
+
         const store = await Store.findOne({
             merchantId: String(merchantId)
         }).lean();
 
         if (!store) {
             return res.json({
+                success: true,
+                connected: false,
                 whatsappNumber: '',
                 customMessage:
-                    'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+                    'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
             });
         }
 
-        return res.json({
+        res.json({
+            success: true,
+            connected: true,
             whatsappNumber: store.whatsappNumber || '',
             customMessage:
                 store.customMessage ||
-                'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+                'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
         });
 
     } catch (error) {
         console.error(
-            'GET /api/settings error:',
-            error
+            '❌ GET settings error:',
+            error.message
         );
 
-        return res.status(500).json({
-            error: 'خطأ في جلب إعدادات المتجر'
+        res.status(500).json({
+            success: false,
+            error: 'Failed to load settings'
         });
     }
 });
 
-// =========================
-// SAVE Settings
-// =========================
+/* =========================
+   SAVE Settings
+========================= */
 
 app.post('/api/settings', async (req, res) => {
-    const {
-        merchant_id,
-        whatsappNumber,
-        customMessage
-    } = req.body;
-
-    if (!merchant_id) {
-        return res.status(400).json({
-            error: 'مطلوب معرف المتجر merchant_id'
-        });
-    }
-
     try {
-        const cleanWhatsappNumber =
-            typeof whatsappNumber === 'string'
-                ? whatsappNumber.trim()
-                : '';
+        const {
+            merchant_id,
+            whatsappNumber,
+            customMessage
+        } = req.body;
 
-        const cleanCustomMessage =
-            typeof customMessage === 'string'
-                ? customMessage.trim()
-                : '';
+        if (!merchant_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'merchant_id is required'
+            });
+        }
 
-        await Store.findOneAndUpdate(
+        const store = await Store.findOneAndUpdate(
             {
                 merchantId: String(merchant_id)
             },
             {
-                $set: {
-                    whatsappNumber: cleanWhatsappNumber,
-                    customMessage:
-                        cleanCustomMessage ||
-                        'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
-                }
+                merchantId: String(merchant_id),
+                whatsappNumber:
+                    whatsappNumber || '',
+                customMessage:
+                    customMessage ||
+                    'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
             },
             {
                 upsert: true,
@@ -295,44 +339,51 @@ app.post('/api/settings', async (req, res) => {
             }
         );
 
-        return res.json({
+        console.log(
+            `✅ Settings saved for merchant: ${merchant_id}`
+        );
+
+        res.json({
             success: true,
-            message: 'تم حفظ الإعدادات بنجاح'
+            message: 'Settings saved successfully',
+            settings: {
+                whatsappNumber:
+                    store.whatsappNumber || '',
+                customMessage:
+                    store.customMessage || ''
+            }
         });
 
     } catch (error) {
         console.error(
-            'POST /api/settings error:',
-            error
+            '❌ SAVE settings error:',
+            error.message
         );
 
-        return res.status(500).json({
-            error: 'فشل حفظ الإعدادات'
+        res.status(500).json({
+            success: false,
+            error: 'Failed to save settings'
         });
     }
 });
 
-// =========================
-// Health Check
-// =========================
+/* =========================
+   404
+========================= */
 
-app.get('/health', (req, res) => {
-    res.json({
-        success: true,
-        service: 'salla-whatsapp-notify',
-        mongodb:
-            mongoose.connection.readyState === 1
-                ? 'connected'
-                : 'disconnected'
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        error: 'Not found'
     });
 });
 
-// =========================
-// Server
-// =========================
-
-const PORT = process.env.PORT || 3000;
+/* =========================
+   Start Server
+========================= */
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(
+        `🚀 Server running on port ${PORT}`
+    );
 });
