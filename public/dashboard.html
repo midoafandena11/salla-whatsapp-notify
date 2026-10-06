@@ -3,69 +3,147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>إعدادات تطبيق التنبيه عبر الواتساب</title>
+    <title>لوحة تحكم إشعارات الواتساب</title>
     <style>
-        body { font-family: system-ui, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .card { background: #fff; padding: 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 450px; width: 100%; text-align: center; }
-        h2 { color: #004d40; margin-bottom: 24px; font-size: 22px; }
-        .form-group { text-align: right; margin-bottom: 20px; }
-        label { display: block; font-weight: bold; margin-bottom: 8px; color: #333; }
-        input, textarea { width: 100%; padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; box-sizing: border-box; font-size: 14px; }
-        .hint { font-size: 11px; color: #777; margin-top: 6px; }
-        button { background-color: #00b57a; color: #fff; border: none; padding: 14px; border-radius: 8px; width: 100%; font-size: 16px; font-weight: bold; cursor: pointer; }
-        button:hover { background-color: #009665; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            max-width: 500px;
+            width: 100%;
+        }
+        h2 {
+            color: #004d40;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        textarea {
+            resize: vertical;
+            height: 100px;
+        }
+        button {
+            width: 100%;
+            background-color: #25D366;
+            color: white;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        button:hover {
+            background-color: #128C7E;
+        }
+        .alert {
+            display: none;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2>إعدادات تطبيق التنبيه عبر الواتساب</h2>
-    <form id="settingsForm">
-        <div class="form-group">
-            <label>رقم الواتساب الخاص بالمتجر:</label>
-            <input type="text" id="whatsappNumber" placeholder="مثال: 966500000000" required>
-            <div class="hint">أدخل الرقم مع مفتاح الدولة بدون (+) (مثال: 966 للمملكة العربية السعودية).</div>
-        </div>
+<div class="container">
+    <h2>إعدادات زر الواتساب للمنتجات</h2>
+    
+    <div class="form-group">
+        <label for="whatsappNumber">رقم الواتساب (مع الرمز الدولي بدون +):</label>
+        <input type="text" id="whatsappNumber" placeholder="مثال: 966500000000">
+    </div>
 
-        <div class="form-group">
-            <label>نص الرسالة الترحيبية:</label>
-            <textarea id="customMessage" rows="3" required>هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.</textarea>
-            <div class="hint">سيتم إضافة اسم المنتج، السعر، والرابط تلقائياً بأسفل هذه الرسالة.</div>
-        </div>
+    <div class="form-group">
+        <label for="customMessage">الرسالة المخصصة عند الضغط على الزر:</label>
+        <textarea id="customMessage" placeholder="هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج."></textarea>
+    </div>
 
-        <button type="submit">حفظ الإعدادات</button>
-    </form>
+    <button onclick="saveSettings()">حفظ الإعدادات</button>
+
+    <div id="successAlert" class="alert alert-success">
+        ✨ تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الآن.
+    </div>
 </div>
 
 <script>
     const urlParams = new URLSearchParams(window.location.search);
-    const merchantId = urlParams.get('merchant_id') || window.Salla?.config?.get('merchant_id');
+    const merchantId = urlParams.get('merchant_id') || '';
 
-    // تحميل الإعدادات الحالية عند فتح الصفحة
+    // جلب الإعدادات الحالية عند فتح الصفحة
     if (merchantId) {
         fetch(`/api/settings?merchant_id=${merchantId}`)
             .then(res => res.json())
             .then(data => {
                 if (data.whatsappNumber) document.getElementById('whatsappNumber').value = data.whatsappNumber;
                 if (data.customMessage) document.getElementById('customMessage').value = data.customMessage;
-            });
+            })
+            .catch(err => console.error('خطأ في جلب البيانات:', err));
     }
 
-    // حفظ الإعدادات عند الضغط على الزر
-    document.getElementById('settingsForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
+    // حفظ الإعدادات ورؤية الرسالة الأنيقة
+    function saveSettings() {
         const whatsappNumber = document.getElementById('whatsappNumber').value;
         const customMessage = document.getElementById('customMessage').value;
 
-        const res = await fetch('/api/settings', {
+        fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ merchant_id: merchantId, whatsappNumber, customMessage })
+            body: JSON.stringify({
+                merchant_id: merchantId,
+                whatsappNumber: whatsappNumber,
+                customMessage: customMessage
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                const alertBox = document.getElementById('successAlert');
+                alertBox.style.display = 'block';
+                alert('✨ تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الآن.');
+            } else {
+                alert('حدث خطأ أثناء حفظ البيانات.');
+            }
+        })
+        .catch(err => {
+            alert('تعذر الاتصال بالسيرفر.');
         });
-
-        const data = await res.json();
-        if (data.success) alert('تم حفظ الإعدادات بنجاح!');
-    });
+    }
 </script>
 
 </body>
