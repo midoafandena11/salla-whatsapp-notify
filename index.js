@@ -10,8 +10,8 @@ app.use(express.urlencoded({ extended: true }));
 // إتاحة الملفات الثابتة داخل مجلد public
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 1. الاتصال بقاعدة البيانات السحابية (MongoDB Atlas)
-const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/salla_db';
+// 1. الاتصال بقاعدة البيانات السحابية (يقبل MONGO_URI أو MONGODB_URI)
+const mongoURI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb+srv://salla_user:M461gTnbcqjrUHcl@cluster0.yefpv0p.mongodb.net/salla_db?retryWrites=true&w=majority';
 
 mongoose.connect(mongoURI, {
     useNewUrlParser: true,
@@ -33,7 +33,7 @@ const storeSchema = new mongoose.Schema({
 
 const Store = mongoose.model('Store', storeSchema);
 
-// 2. إعادة توجيه الصفحة الرئيسية (/) إلى لوحة التحكم لحل مشكلة Cannot GET /
+// 2. إعادة توجيه الصفحة الرئيسية (/) إلى لوحة التحكم
 app.get('/', (req, res) => {
     res.redirect('/dashboard');
 });
