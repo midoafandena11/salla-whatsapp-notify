@@ -3,148 +3,164 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة تحكم إشعارات الواتساب</title>
+    <title>إعدادات زِر الواتساب</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f7f6;
+            background-color: #f8f9fa;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
+            color: #333;
         }
-        .container {
+
+        .card {
             background-color: #ffffff;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-            max-width: 500px;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
             width: 100%;
+            max-width: 480px;
+            box-sizing: border-box;
         }
+
         h2 {
-            color: #004d40;
-            margin-bottom: 20px;
+            margin-top: 0;
+            margin-bottom: 24px;
+            color: #111827;
+            font-size: 22px;
             text-align: center;
         }
+
         .form-group {
             margin-bottom: 20px;
         }
+
         label {
             display: block;
             margin-bottom: 8px;
-            font-weight: bold;
-            color: #333;
-        }
-        input, textarea {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            box-sizing: border-box;
             font-size: 14px;
+            font-weight: 600;
+            color: #374151;
         }
+
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus, textarea:focus {
+            border-color: #10b981;
+        }
+
         textarea {
             resize: vertical;
-            height: 100px;
+            height: 90px;
         }
+
         button {
             width: 100%;
-            background-color: #25D366;
-            color: white;
-            padding: 14px;
+            background-color: #10b981;
+            color: #ffffff;
             border: none;
+            padding: 14px;
             border-radius: 8px;
             font-size: 16px;
-            font-weight: bold;
+            font-weight: 600;
             cursor: pointer;
-            transition: background 0.3s ease;
+            transition: background-color 0.2s;
         }
+
         button:hover {
-            background-color: #128C7E;
+            background-color: #059669;
         }
-        .alert {
+
+        .alert-success {
             display: none;
-            padding: 15px;
-            margin-top: 15px;
+            margin-top: 20px;
+            padding: 14px;
+            background-color: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            color: #065f46;
             border-radius: 8px;
             text-align: center;
-            font-weight: bold;
-        }
-        .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+            font-size: 15px;
+            font-weight: 600;
         }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h2>إعدادات زر الواتساب للمنتجات</h2>
-    
-    <div class="form-group">
-        <label for="whatsappNumber">رقم الواتساب (مع الرمز الدولي بدون +):</label>
-        <input type="text" id="whatsappNumber" placeholder="مثال: 966500000000">
+    <div class="card">
+        <h2>إعدادات زِر الواتساب</h2>
+
+        <div class="form-group">
+            <label for="whatsappNumber">رقم الواتساب:</label>
+            <input type="text" id="whatsappNumber" placeholder="966500000000">
+        </div>
+
+        <div class="form-group">
+            <label for="customMessage">الرسالة المخصصة:</label>
+            <textarea id="customMessage" placeholder="أهلاً، أود الاستفسار عن توفر هذا المنتج..."></textarea>
+        </div>
+
+        <button onclick="saveSettings()">حفظ البيانات</button>
+
+        <div id="successAlert" class="alert-success">
+            تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الان
+        </div>
     </div>
 
-    <div class="form-group">
-        <label for="customMessage">الرسالة المخصصة عند الضغط على الزر:</label>
-        <textarea id="customMessage" placeholder="هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج."></textarea>
-    </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const merchantId = urlParams.get('merchant_id') || '';
 
-    <button onclick="saveSettings()">حفظ الإعدادات</button>
+        if (merchantId) {
+            fetch(`/api/settings?merchant_id=${merchantId}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.whatsappNumber) document.getElementById('whatsappNumber').value = data.whatsappNumber;
+                    if (data.customMessage) document.getElementById('customMessage').value = data.customMessage;
+                })
+                .catch(err => console.error('خطأ في جلب البيانات:', err));
+        }
 
-    <div id="successAlert" class="alert alert-success">
-        ✨ تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الآن.
-    </div>
-</div>
+        function saveSettings() {
+            const whatsappNumber = document.getElementById('whatsappNumber').value;
+            const customMessage = document.getElementById('customMessage').value;
 
-<script>
-    const urlParams = new URLSearchParams(window.location.search);
-    const merchantId = urlParams.get('merchant_id') || '';
-
-    // جلب الإعدادات الحالية عند فتح الصفحة
-    if (merchantId) {
-        fetch(`/api/settings?merchant_id=${merchantId}`)
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    merchant_id: merchantId,
+                    whatsappNumber: whatsappNumber,
+                    customMessage: customMessage
+                })
+            })
             .then(res => res.json())
             .then(data => {
-                if (data.whatsappNumber) document.getElementById('whatsappNumber').value = data.whatsappNumber;
-                if (data.customMessage) document.getElementById('customMessage').value = data.customMessage;
+                if (data.success) {
+                    const alertBox = document.getElementById('successAlert');
+                    alertBox.style.display = 'block';
+                } else {
+                    alert('حدث خطأ أثناء حفظ البيانات.');
+                }
             })
-            .catch(err => console.error('خطأ في جلب البيانات:', err));
-    }
-
-    // حفظ الإعدادات ورؤية الرسالة الأنيقة
-    function saveSettings() {
-        const whatsappNumber = document.getElementById('whatsappNumber').value;
-        const customMessage = document.getElementById('customMessage').value;
-
-        fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                merchant_id: merchantId,
-                whatsappNumber: whatsappNumber,
-                customMessage: customMessage
-            })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                const alertBox = document.getElementById('successAlert');
-                alertBox.style.display = 'block';
-                alert('✨ تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الآن.');
-            } else {
-                alert('حدث خطأ أثناء حفظ البيانات.');
-            }
-        })
-        .catch(err => {
-            alert('تعذر الاتصال بالسيرفر.');
-        });
-    }
-</script>
+            .catch(err => {
+                alert('تعذر الاتصال بالسيرفر.');
+            });
+        }
+    </script>
 
 </body>
 </html>
