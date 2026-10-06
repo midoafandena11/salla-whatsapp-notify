@@ -1,13 +1,10 @@
 (function () {
-    // 1. استخراج معرف المتجر (merchant_id)
+    // 1. جلب merchant_id
     let merchantId = null;
-    
     if (typeof salla !== 'undefined' && salla.config) {
         merchantId = salla.config.get('store.id');
     } else if (window.store && window.store.id) {
         merchantId = window.store.id;
-    } else if (window.Salla && window.Salla.eventId) {
-        merchantId = window.Salla.eventId;
     }
 
     if (!merchantId) {
@@ -15,79 +12,72 @@
         merchantId = urlParams.get('merchant_id');
     }
 
-    if (!merchantId) {
-        console.log('Salla WhatsApp: Merchant ID not found');
-        return;
-    }
+    if (!merchantId) return;
 
-    // 2. جلب إعدادات التاجر من السيرفر
+    // 2. جلب إعدادات التاجر
     fetch(`https://salla-whatsapp-notify.onrender.com/api/settings?merchant_id=${merchantId}`)
         .then(res => res.json())
         .then(data => {
-            if (!data || !data.whatsappNumber) {
-                console.log('Salla WhatsApp: No WhatsApp number found');
-                return;
-            }
-
-            // البدء في فحص المنتجات المنتهية فقط
+            if (!data || !data.whatsappNumber) return;
             initWhatsAppNotify(data.whatsappNumber, data.customMessage);
         })
-        .catch(err => console.error('Salla WhatsApp Error:', err));
+        .catch(err => console.error(err));
 
     function initWhatsAppNotify(phone, customMsg) {
         const checkAndInject = () => {
-            // إذا كان الزر مضافاً بالفعل لا تكرره
             if (document.getElementById('salla-whatsapp-notify-btn')) return;
 
-            // 1. البحث عن أي عنصر يدل على أن المنتج نفدت كميته
             let isOutOfStock = false;
             let targetElem = null;
 
-            // أ) البحث في عنصر أزرار سلة الذكية
+            // أ) فحص عنصر زر سلة الرئيسي (بما فيه الـ Shadow DOM)
             const sallaBtn = document.querySelector('salla-add-to-cart-button');
             if (sallaBtn) {
-                const isOut = sallaBtn.getAttribute('is-out-of-stock') !== null || 
-                              sallaBtn.hasAttribute('out-of-stock') ||
-                              sallaBtn.classList.contains('out-of-stock');
-                if (isOut) {
+                targetElem = sallaBtn;
+                
+                // فحص الخصائص المباشرة
+                if (sallaBtn.hasAttribute('out-of-stock') || sallaBtn.getAttribute('is-out-of-stock') !== null) {
                     isOutOfStock = true;
-                    targetElem = sallaBtn;
+                } 
+                // فحص محتوى الـ Shadow Root الداخلي للزر
+                else if (sallaBtn.shadowRoot) {
+                    const shadowText = sallaBtn.shadowRoot.textContent || '';
+                    if (shadowText.includes('نفدت الكمية') || shadowText.includes('غير متوفر')) {
+                        isOutOfStock = true;
+                    }
                 }
             }
 
-            // ب) البحث عن نصوص "نفدت الكمية" أو "غير متوفر" في أي مكان بالصفحة
+            // ب) فحص باقي عناصر الصفحة العادية كخيار إضافي
             if (!isOutOfStock) {
-                const allElements = Array.from(document.querySelectorAll('button, div, span, p, label'));
-                const foundText = allElements.find(el => {
+                const elements = Array.from(document.querySelectorAll('button, div, span, p'));
+                const found = elements.find(el => {
                     const txt = el.innerText ? el.innerText.trim() : '';
-                    return txt === 'نفدت الكمية' || txt === 'غير متوفر' || txt.includes('نفذت الكمية');
+                    return txt === 'نفدت الكمية' || txt === 'غير متوفر';
                 });
-
-                if (foundText) {
+                if (found) {
                     isOutOfStock = true;
-                    targetElem = foundText;
+                    targetElem = found;
                 }
             }
 
-            // إذا كان المنتج متوفراً (ليس نفد)، اخرج ولا ترسم الزر إطلاقاً
+            // إذا كان المنتج متوفراً، لا تفعل شيئاً
             if (!isOutOfStock || !targetElem) return;
 
-            // 2. تجهيز بيانات الرسالة
+            // تجهيز البيانات وإنشاء الزر
             const productName = document.querySelector('h1')?.innerText?.trim() || '';
             const productUrl = window.location.href;
             
-            let fullMessage = customMsg || 'أهلاً، أود الاستفسار عن توفر هذا المنتج عند إعادة توفره.';
+            let fullMessage = customMsg || 'أهلاً، أود الاستفسار عن توفر هذا المنتج.';
             if (productName) fullMessage += `\nالمنتج: ${productName}`;
             fullMessage += `\nالرابط: ${productUrl}`;
 
-            // 3. إنشاء الزر الأخضر
             const btn = document.createElement('a');
             btn.id = 'salla-whatsapp-notify-btn';
             btn.href = `https://wa.me/${phone}?text=${encodeURIComponent(fullMessage)}`;
             btn.target = '_blank';
             btn.innerText = 'أعلمني عند التوفر عبر الواتساب';
 
-            // تنسيق الزر
             Object.assign(btn.style, {
                 display: 'flex',
                 justifyContent: 'center',
@@ -108,7 +98,6 @@
                 zIndex: '99999'
             });
 
-            // إدراج الزر أسفل عنصر "نفدت الكمية" مباشرة
             targetElem.insertAdjacentElement('afterend', btn);
         };
 
