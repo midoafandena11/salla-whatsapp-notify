@@ -22,7 +22,7 @@ mongoose.connect(mongoURI, {
     console.error('MongoDB Connection Error:', err);
 });
 
-// نموذج التاجر
+// نموذج بيانات التاجر
 const storeSchema = new mongoose.Schema({
     merchantId: { type: String, required: true, unique: true },
     accessToken: String,
@@ -52,8 +52,8 @@ app.get('/auth/callback', async (req, res) => {
     }
 
     try {
-        // 1. تبادل الكود بالحصول على access_token وبيانات التاجر
-        const response = await axios.post('https://accounts.salla.sa/oauth2/token', new URLSearchParams({
+        // 1. تبادل الكود بالحصول على access_token
+        const tokenResponse = await axios.post('https://accounts.salla.sa/oauth2/token', new URLSearchParams({
             client_id: process.env.SALLA_CLIENT_ID || '0abf5b9d-4d16-453c-be37-e6b49a7fb9e9',
             client_secret: process.env.SALLA_CLIENT_SECRET || '342b49a0107bed90e5dca7a188090b13360c369eea675ce4466ba320298f0537',
             grant_type: 'authorization_code',
@@ -65,37 +65,32 @@ app.get('/auth/callback', async (req, res) => {
             }
         });
 
-        const { access_token, refresh_token, merchant } = response.data;
+        const { access_token, refresh_token } = tokenResponse.data;
 
-        // 2. استخراج معرف المتجر الحقيقي الخاص بالتاجر
-        let merchantId = merchant || response.data.merchant_id;
-
-        // إذا لم يكن المعرف في الاستجابة المباشرة، نفك تشفير JWT Token للحصول عليه
-        if (!merchantId && access_token) {
-            try {
-                const payloadBase64 = access_token.split('.')[1];
-                const decodedPayload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf-8'));
-                merchantId = decodedPayload.merchant_id || decodedPayload.sub || decodedPayload.merchant;
-            } catch (e) {
-                console.error('Failed to parse token payload:', e);
+        // 2. جلب بيانات التاجر الحقيقية من Endpoint الرسمية لسلة
+        const userInfoResponse = await axios.get('https://accounts.salla.sa/oauth2/user/info', {
+            headers: {
+                Authorization: `Bearer ${access_token}`
             }
-        }
+        });
+
+        const merchantId = userInfoResponse.data?.data?.merchant?.id || userInfoResponse.data?.data?.id;
 
         if (!merchantId) {
-            return res.status(400).send('تعذر التعرف على معرف المتجر الخاص بك من سلة.');
+            return res.status(400).send('تعذر العثور على معرف المتجر الخاص بك في بيانات سلة.');
         }
 
-        merchantId = String(merchantId);
+        const merchantIdStr = String(merchantId);
 
-        // 3. حفظ أو تحديث بيانات التاجر في الداتابيز برقمه الفريد
+        // 3. حفظ البيانات بداتابيز التاجر الخاصة به
         await Store.findOneAndUpdate(
-            { merchantId },
+            { merchantId: merchantIdStr },
             { accessToken: access_token, refreshToken: refresh_token },
             { upsert: true, new: true }
         );
 
-        // 4. توجيه التاجر إلى لوحة التحكم الخاصة به
-        res.redirect(`/dashboard?merchant_id=${merchantId}`);
+        // 4. التوجيه المباشر للوحة تحكم التاجر
+        res.redirect(`/dashboard?merchant_id=${merchantIdStr}`);
 
     } catch (error) {
         console.error('Salla OAuth Error:', error.response?.data || error.message);
@@ -103,7 +98,7 @@ app.get('/auth/callback', async (req, res) => {
     }
 });
 
-// API الإعدادات (خاص بكل تاجر بناءً على merchant_id)
+// API الإعدادات
 app.get('/api/settings', async (req, res) => {
     const { merchant_id } = req.query;
 
