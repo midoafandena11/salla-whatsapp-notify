@@ -6,16 +6,23 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
 
-// الاتصال بقاعدة بيانات MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/salla-whatsapp', {
+// إتاحة الملفات الثابتة داخل مجلد public
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 1. الاتصال بقاعدة البيانات السحابية (MongoDB Atlas)
+const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/salla_db';
+
+mongoose.connect(mongoURI, {
     useNewUrlParser: true,
     useUnifiedTopology: true
-}).then(() => console.log('MongoDB Connected'))
-  .catch(err => console.error('MongoDB Error:', err));
+}).then(() => {
+    console.log('MongoDB Connected Successfully to Cloud!');
+}).catch((err) => {
+    console.error('MongoDB Connection Error:', err);
+});
 
-// تعريف نموذج المتاجر (Store Schema)
+// تعريف نموذج بيانات المتجر
 const storeSchema = new mongoose.Schema({
     merchantId: { type: String, required: true, unique: true },
     accessToken: String,
@@ -26,7 +33,17 @@ const storeSchema = new mongoose.Schema({
 
 const Store = mongoose.model('Store', storeSchema);
 
-// 1. رابط Callback الخاص بمصادقة سلة (OAuth)
+// 2. إعادة توجيه الصفحة الرئيسية (/) إلى لوحة التحكم لحل مشكلة Cannot GET /
+app.get('/', (req, res) => {
+    res.redirect('/dashboard');
+});
+
+// 3. مسار لوحة تحكم التاجر
+app.get('/dashboard', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// 4. رابط Callback لمصادقة سلة (OAuth)
 app.get('/auth/callback', async (req, res) => {
     const { code } = req.query;
     try {
@@ -40,50 +57,47 @@ app.get('/auth/callback', async (req, res) => {
 
         const { access_token, refresh_token } = response.data;
 
-        // جلب معلومات المتجر لمعرفة الـ Merchant ID
+        // جلب معرف المتجر (Merchant ID)
         const userProfile = await axios.get('https://api.salla.dev/store/v1/oauth/user', {
             headers: { Authorization: `Bearer ${access_token}` }
         });
 
         const merchantId = userProfile.data.data.merchant.id;
 
-        // حفظ أو تحديث بيانات التاجر في MongoDB
+        // حفظ أو تحديث التوكن في الداتابيز
         await Store.findOneAndUpdate(
             { merchantId },
             { accessToken: access_token, refreshToken: refresh_token },
             { upsert: true, new: true }
         );
 
-        // توجيه التاجر إلى لوحة التحكم مع إضافة ID المتجر
+        // توجيه التاجر إلى لوحة التحكم
         res.redirect(`/dashboard?merchant_id=${merchantId}`);
     } catch (error) {
         console.error('OAuth Error:', error.response?.data || error.message);
-        res.status(500).send('حدث خطأ أثناء الاتصال مع سلة');
+        res.status(500).send('حدث خطأ أثناء المصادقة مع سلة');
     }
 });
 
-// 2. توفير صفحة لوحة التحكم
-app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-// 3. API لجلب إعدادات التاجر
+// 5. API لجلب إعدادات التاجر
 app.get('/api/settings', async (req, res) => {
     const { merchant_id } = req.query;
     try {
         const store = await Store.findOne({ merchantId: merchant_id });
-        if (!store) return res.status(404).json({ error: 'المتجر غير موجود' });
+        if (!store) {
+            return res.json({ whatsappNumber: '', customMessage: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' });
+        }
         
         res.json({
             whatsappNumber: store.whatsappNumber,
             customMessage: store.customMessage
         });
     } catch (err) {
-        res.status(500).json({ error: 'خطأ في خادم البيانات' });
+        res.status(500).json({ error: 'خطأ في جلب البيانات' });
     }
 });
 
-// 4. API لحفظ إعدادات التاجر من لوحة التحكم
+// 6. API لحفظ إعدادات التاجر
 app.post('/api/settings', async (req, res) => {
     const { merchant_id, whatsappNumber, customMessage } = req.body;
     try {
@@ -98,5 +112,6 @@ app.post('/api/settings', async (req, res) => {
     }
 });
 
+// تشغيل السيرفر
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
