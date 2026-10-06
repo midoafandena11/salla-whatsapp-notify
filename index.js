@@ -7,10 +7,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// إتاحة الملفات الثابتة داخل مجلد public
+// إتاحة الملفات الثابتة
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 1. الاتصال بقاعدة البيانات السحابية (يقبل MONGO_URI أو MONGODB_URI)
+// الاتصال بقاعدة البيانات
 const mongoURI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb+srv://salla_user:M461gTnbcqjrUHcl@cluster0.yefpv0p.mongodb.net/salla_db?retryWrites=true&w=majority';
 
 mongoose.connect(mongoURI, {
@@ -22,7 +22,7 @@ mongoose.connect(mongoURI, {
     console.error('MongoDB Connection Error:', err);
 });
 
-// تعريف نموذج بيانات المتجر
+// النموذج
 const storeSchema = new mongoose.Schema({
     merchantId: { type: String, required: true, unique: true },
     accessToken: String,
@@ -33,53 +33,64 @@ const storeSchema = new mongoose.Schema({
 
 const Store = mongoose.model('Store', storeSchema);
 
-// 2. إعادة توجيه الصفحة الرئيسية (/) إلى لوحة التحكم
+// توجيه الصفحة الرئيسية
 app.get('/', (req, res) => {
     res.redirect('/dashboard');
 });
 
-// 3. مسار لوحة تحكم التاجر
+// لوحة التحكم
 app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// 4. رابط Callback لمصادقة سلة (OAuth)
+// OAuth Callback
 app.get('/auth/callback', async (req, res) => {
     const { code } = req.query;
+
+    if (!code) {
+        return res.status(400).send('لم يتم استلام كود المصادقة من سلة');
+    }
+
     try {
-        const response = await axios.post('https://accounts.salla.sa/oauth2/token', {
-            client_id: process.env.SALLA_CLIENT_ID,
-            client_secret: process.env.SALLA_CLIENT_SECRET,
+        // إرسال طلب التوكن لـ Salla
+        const response = await axios.post('https://accounts.salla.sa/oauth2/token', new URLSearchParams({
+            client_id: process.env.SALLA_CLIENT_ID || '0abf5b9d-4d16-453c-be37-e6b49a7fb9e9',
+            client_secret: process.env.SALLA_CLIENT_SECRET || '342b49a0107bed90e5dca7a188090b13360c369eea675ce4466ba320298f0537',
             grant_type: 'authorization_code',
             redirect_uri: 'https://salla-whatsapp-notify.onrender.com/auth/callback',
-            code
+            code: code
+        }), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
         });
 
         const { access_token, refresh_token } = response.data;
 
-        // جلب معرف المتجر (Merchant ID)
+        // جلب بيانات التاجر
         const userProfile = await axios.get('https://api.salla.dev/store/v1/oauth/user', {
             headers: { Authorization: `Bearer ${access_token}` }
         });
 
-        const merchantId = userProfile.data.data.merchant.id;
+        const merchantId = userProfile.data.data.merchant.id || userProfile.data.data.id;
 
-        // حفظ أو تحديث التوكن في الداتابيز
+        // حفظ البيانات
         await Store.findOneAndUpdate(
-            { merchantId },
+            { merchantId: String(merchantId) },
             { accessToken: access_token, refreshToken: refresh_token },
             { upsert: true, new: true }
         );
 
-        // توجيه التاجر إلى لوحة التحكم
+        // التوجيه للوحة التحكم مع معرف المتجر
         res.redirect(`/dashboard?merchant_id=${merchantId}`);
+
     } catch (error) {
-        console.error('OAuth Error:', error.response?.data || error.message);
-        res.status(500).send('حدث خطأ أثناء المصادقة مع سلة');
+        console.error('Salla OAuth Detailed Error:', error.response?.data || error.message);
+        res.status(500).send(`حدث خطأ أثناء المصادقة مع سلة: ${JSON.stringify(error.response?.data || error.message)}`);
     }
 });
 
-// 5. API لجلب إعدادات التاجر
+// API الإعدادات
 app.get('/api/settings', async (req, res) => {
     const { merchant_id } = req.query;
     try {
@@ -87,7 +98,6 @@ app.get('/api/settings', async (req, res) => {
         if (!store) {
             return res.json({ whatsappNumber: '', customMessage: 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.' });
         }
-        
         res.json({
             whatsappNumber: store.whatsappNumber,
             customMessage: store.customMessage
@@ -97,7 +107,6 @@ app.get('/api/settings', async (req, res) => {
     }
 });
 
-// 6. API لحفظ إعدادات التاجر
 app.post('/api/settings', async (req, res) => {
     const { merchant_id, whatsappNumber, customMessage } = req.body;
     try {
@@ -112,6 +121,6 @@ app.post('/api/settings', async (req, res) => {
     }
 });
 
-// تشغيل السيرفر
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+           
