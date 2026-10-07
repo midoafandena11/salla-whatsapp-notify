@@ -205,79 +205,81 @@
     /* =========================================================
        Updated getProductPrice Function (معالجة دقيقة للأسعار)
     ========================================================= */
-    function cleanPriceText(str) {
-        if (!str) return '';
-        // تنظيف النصوص والمسافات الزائدة وإخراج السعر متبوعاً بالعملة بشكل منظم
-        let cleaned = String(str).replace(/\s+/g, ' ').trim();
-        return cleaned;
+    function extractNumber(val) {
+        if (!val) return null;
+        const match = String(val).match(/\d+(\.\d+)?/);
+        return match ? parseFloat(match[0]) : null;
     }
 
     function getProductPrice() {
-        let regularPrice = '';
-        let salePrice = '';
+        let regularPriceStr = '';
+        let salePriceStr = '';
+        let currency = 'ر.س';
 
-        // 1. محاولة قراءة الأسعار من كائنات سلة البرمجية مباشرة (أقوى وأدق طريقة)
         try {
-            if (window.salla && window.salla.config) {
-                const prod = window.salla.config.get('product') || window.salla.product;
-                if (prod) {
-                    if (prod.regular_price || prod.compare_price) {
-                        regularPrice = String(prod.regular_price || prod.compare_price).trim();
-                    }
-                    if (prod.price) {
-                        salePrice = String(prod.price).trim();
-                    }
+            let prod = null;
+            if (window.salla) {
+                if (typeof window.salla.config?.get === 'function') {
+                    prod = window.salla.config.get('product');
+                }
+                if (!prod && window.salla.product) {
+                    prod = window.salla.product;
                 }
             }
-        } catch (e) {}
 
-        // 2. الفحص عبر عناصر <salla-price> و Shadow DOM
-        if (!regularPrice && !salePrice) {
-            const priceComponents = document.querySelectorAll('salla-price, .product-price');
-            
-            priceComponents.forEach(comp => {
-                // قراءة الخصائص المباشرة الخاصة بعنصر salla-price
-                if (comp.getAttribute('regular-price')) {
-                    regularPrice = comp.getAttribute('regular-price');
-                }
-                if (comp.getAttribute('price')) {
-                    salePrice = comp.getAttribute('price');
-                }
+            if (prod) {
+                if (prod.currency) currency = prod.currency;
 
-                // قراءة العناصر الفرعية داخل السعر (السعر المشطوب والحالي)
-                const regularElem = comp.querySelector('.price-regular, .price-before, del, s');
-                const saleElem = comp.querySelector('.price-sale, .price-after, .main-price');
+                const pPrice = prod.price?.amount ?? prod.price;
+                const pRegular = prod.regular_price?.amount ?? prod.regular_price ?? prod.compare_price?.amount ?? prod.compare_price;
 
-                if (regularElem && regularElem.textContent) {
-                    regularPrice = cleanPriceText(regularElem.textContent);
-                }
-                if (saleElem && saleElem.textContent) {
-                    salePrice = cleanPriceText(saleElem.textContent);
-                }
-            });
+                if (pPrice !== undefined && pPrice !== null) salePriceStr = String(pPrice);
+                if (pRegular !== undefined && pRegular !== null) regularPriceStr = String(pRegular);
+            }
+        } catch (e) {
+            console.warn('Error reading Salla product object:', e);
         }
 
-        // 3. الحل الاحتياطي (فحص الميتا داتا أو العناصر الظاهرة بوضوح)
-        if (!salePrice && !regularPrice) {
-            const metaPrice = document.querySelector('meta[property="product:price:amount"]');
-            const metaCurrency = document.querySelector('meta[property="product:price:currency"]');
-            if (metaPrice) {
-                salePrice = `${metaPrice.content} ${metaCurrency ? metaCurrency.content : ''}`.trim();
+        if (!salePriceStr && !regularPriceStr) {
+            const priceComp = document.querySelector('salla-price, .product-price');
+            if (priceComp) {
+                const regAttr = priceComp.getAttribute('regular-price');
+                const priceAttr = priceComp.getAttribute('price');
+
+                if (regAttr) regularPriceStr = regAttr;
+                if (priceAttr) salePriceStr = priceAttr;
+
+                if (!regularPriceStr || !salePriceStr) {
+                    const regElem = priceComp.querySelector('.price-regular, .price-before, del, s');
+                    const saleElem = priceComp.querySelector('.price-sale, .price-after, .main-price');
+
+                    if (regElem) regularPriceStr = regElem.textContent;
+                    if (saleElem) salePriceStr = saleElem.textContent;
+                }
             }
         }
 
-        // إذا تم العثور على سعر واحد فقط وكان ينطبق على السعرين، نجعله في السعر الحالي
-        if (salePrice && regularPrice && salePrice === regularPrice) {
-            regularPrice = '';
+        const regNum = extractNumber(regularPriceStr);
+        const saleNum = extractNumber(salePriceStr);
+
+        let finalRegular = '';
+        let finalSale = '';
+
+        if (regNum !== null && saleNum !== null && regNum > saleNum) {
+            finalRegular = `${regNum} ${currency}`;
+            finalSale = `${saleNum} ${currency}`;
+        } else if (saleNum !== null) {
+            finalSale = `${saleNum} ${currency}`;
+        } else if (regNum !== null) {
+            finalSale = `${regNum} ${currency}`;
         }
 
         return {
-            regularPrice: cleanPriceText(regularPrice),
-            salePrice: cleanPriceText(salePrice)
+            regularPrice: finalRegular,
+            salePrice: finalSale
         };
-    }
-
-    function getProductUrl() {
+            }
+        function getProductUrl() {
         return window.location.href;
     }
 
@@ -721,3 +723,4 @@
     }
 
 })();
+    
