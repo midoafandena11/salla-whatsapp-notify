@@ -40,10 +40,6 @@
             return merchantId;
         }
 
-        /*
-         * Main source:
-         * Salla storefront store ID
-         */
         const storeId =
             getSallaConfig('store.id');
 
@@ -52,9 +48,6 @@
             return merchantId;
         }
 
-        /*
-         * Fallbacks
-         */
         const possibleIds = [
             getSallaConfig('store_id'),
             getSallaConfig('merchant_id'),
@@ -68,9 +61,6 @@
             }
         }
 
-        /*
-         * URL fallback
-         */
         try {
             const params =
                 new URLSearchParams(
@@ -213,64 +203,77 @@
     }
 
     /* =========================================================
-       Updated getProductPrice Function
+       Updated getProductPrice Function (معالجة دقيقة للأسعار)
     ========================================================= */
-    function getProductPrice() {
-        let regularPrice = ''; // السعر الأصلي / قبل الخصم
-        let salePrice = '';    // السعر بعد الخصم
+    function cleanPriceText(str) {
+        if (!str) return '';
+        // تنظيف النصوص والمسافات الزائدة وإخراج السعر متبوعاً بالعملة بشكل منظم
+        let cleaned = String(str).replace(/\s+/g, ' ').trim();
+        return cleaned;
+    }
 
-        // 1. محاولة قراءة الأسعار من كائن سلة المباشر
+    function getProductPrice() {
+        let regularPrice = '';
+        let salePrice = '';
+
+        // 1. محاولة قراءة الأسعار من كائنات سلة البرمجية مباشرة (أقوى وأدق طريقة)
         try {
-            if (window.salla && window.salla.product) {
-                const prod = window.salla.product;
-                if (prod.regular_price || prod.compare_price) {
-                    regularPrice = String(prod.regular_price || prod.compare_price).trim();
-                }
-                if (prod.price) {
-                    salePrice = String(prod.price).trim();
+            if (window.salla && window.salla.config) {
+                const prod = window.salla.config.get('product') || window.salla.product;
+                if (prod) {
+                    if (prod.regular_price || prod.compare_price) {
+                        regularPrice = String(prod.regular_price || prod.compare_price).trim();
+                    }
+                    if (prod.price) {
+                        salePrice = String(prod.price).trim();
+                    }
                 }
             }
         } catch (e) {}
 
-        // 2. محاولة قراءة الأسعار من Salla Config
+        // 2. الفحص عبر عناصر <salla-price> و Shadow DOM
         if (!regularPrice && !salePrice) {
-            const cfgPrice = getSallaConfig('page.price');
-            const cfgRegularPrice = getSallaConfig('page.regular_price') || getSallaConfig('page.compare_price');
+            const priceComponents = document.querySelectorAll('salla-price, .product-price');
+            
+            priceComponents.forEach(comp => {
+                // قراءة الخصائص المباشرة الخاصة بعنصر salla-price
+                if (comp.getAttribute('regular-price')) {
+                    regularPrice = comp.getAttribute('regular-price');
+                }
+                if (comp.getAttribute('price')) {
+                    salePrice = comp.getAttribute('price');
+                }
 
-            if (cfgRegularPrice) regularPrice = String(cfgRegularPrice).trim();
-            if (cfgPrice) salePrice = String(cfgPrice).trim();
+                // قراءة العناصر الفرعية داخل السعر (السعر المشطوب والحالي)
+                const regularElem = comp.querySelector('.price-regular, .price-before, del, s');
+                const saleElem = comp.querySelector('.price-sale, .price-after, .main-price');
+
+                if (regularElem && regularElem.textContent) {
+                    regularPrice = cleanPriceText(regularElem.textContent);
+                }
+                if (saleElem && saleElem.textContent) {
+                    salePrice = cleanPriceText(saleElem.textContent);
+                }
+            });
         }
 
-        // 3. الفحص عبر عناصر DOM في الصفحة إذا لم تتوفر البيانات أعلاه
-        if (!regularPrice && !salePrice) {
-            // البحث عن السعر القديم (المشطوب / قبل الخصم)
-            const oldPriceElem = document.querySelector(
-                '.price-regular, .price-before, .regular-price, del, s, [class*="regular-price"], [class*="before-discount"]'
-            );
-            if (oldPriceElem && /\d/.test(oldPriceElem.textContent)) {
-                regularPrice = oldPriceElem.textContent.trim().replace(/\s+/g, ' ');
+        // 3. الحل الاحتياطي (فحص الميتا داتا أو العناصر الظاهرة بوضوح)
+        if (!salePrice && !regularPrice) {
+            const metaPrice = document.querySelector('meta[property="product:price:amount"]');
+            const metaCurrency = document.querySelector('meta[property="product:price:currency"]');
+            if (metaPrice) {
+                salePrice = `${metaPrice.content} ${metaCurrency ? metaCurrency.content : ''}`.trim();
             }
+        }
 
-            // البحث عن السعر الحالي (بعد الخصم)
-            const currentPriceElem = document.querySelector(
-                '.product-price, .price-after, .sale-price, [class*="main-price"], [class*="current-price"]'
-            );
-            if (currentPriceElem && /\d/.test(currentPriceElem.textContent)) {
-                salePrice = currentPriceElem.textContent.trim().replace(/\s+/g, ' ');
-            }
-
-            // محاولة عامة في حال عدم العثور على الكلاسات المحددة
-            if (!regularPrice && !salePrice) {
-                const genericPriceElem = document.querySelector('[class*="price"], [data-product-price]');
-                if (genericPriceElem && /\d/.test(genericPriceElem.textContent)) {
-                    salePrice = genericPriceElem.textContent.trim().replace(/\s+/g, ' ');
-                }
-            }
+        // إذا تم العثور على سعر واحد فقط وكان ينطبق على السعرين، نجعله في السعر الحالي
+        if (salePrice && regularPrice && salePrice === regularPrice) {
+            regularPrice = '';
         }
 
         return {
-            regularPrice: regularPrice,
-            salePrice: salePrice
+            regularPrice: cleanPriceText(regularPrice),
+            salePrice: cleanPriceText(salePrice)
         };
     }
 
@@ -304,9 +307,6 @@
             }
         }
 
-        /*
-         * Web component property
-         */
         const properties = [
             'productStatus',
             'status'
@@ -332,9 +332,6 @@
     }
 
     function isOutOfStock() {
-        /*
-         * Salla's official product button
-         */
         const productButtons =
             document.querySelectorAll(
                 'salla-add-product-button'
@@ -357,9 +354,6 @@
                 return true;
             }
 
-            /*
-             * Check disabled state
-             */
             if (
                 component.hasAttribute('disabled') ||
                 component.getAttribute('aria-disabled') === 'true'
@@ -385,9 +379,6 @@
             }
         }
 
-        /*
-         * Salla availability component
-         */
         const availability =
             document.querySelector(
                 'salla-product-availability'
@@ -397,9 +388,6 @@
             return true;
         }
 
-        /*
-         * Generic fallback checks
-         */
         const possibleButtons =
             document.querySelectorAll(
                 'button, a, [role="button"]'
@@ -451,9 +439,6 @@
     ========================= */
 
     function findProductButton() {
-        /*
-         * Official Salla component
-         */
         const official =
             document.querySelector(
                 'salla-add-product-button'
@@ -463,9 +448,6 @@
             return official;
         }
 
-        /*
-         * Fallbacks for themes
-         */
         const selectors = [
             '[data-product-id] button',
             '.product-form button',
@@ -521,9 +503,6 @@
         message +=
             `\n\nالمنتج: ${productName}`;
 
-        /*
-         * صياغة الأسعار حسب وجود التخفيض أو عدمه
-         */
         if (priceInfo.regularPrice && priceInfo.salePrice && priceInfo.regularPrice !== priceInfo.salePrice) {
             message += `\nالسعر قبل الخصم: ${priceInfo.regularPrice}`;
             message += `\nالسعر بعد الخصم: ${priceInfo.salePrice}`;
@@ -622,9 +601,6 @@
             }
         );
 
-        /*
-         * Insert after the Salla product button
-         */
         productButton.insertAdjacentElement(
             'afterend',
             button
@@ -636,9 +612,6 @@
     ========================= */
 
     async function checkProduct() {
-        /*
-         * Only run on product pages
-         */
         const pageId =
             getSallaConfig('page.id');
 
@@ -697,10 +670,6 @@
         );
 
     function start() {
-        /*
-         * Observe page changes because
-         * Salla web components render dynamically.
-         */
         if (document.body) {
             observer.observe(
                 document.body,
@@ -718,9 +687,6 @@
             );
         }
 
-        /*
-         * Initial attempts
-         */
         checkProduct();
 
         setTimeout(
