@@ -212,40 +212,66 @@
             'هذا المنتج';
     }
 
+    /* =========================================================
+       Updated getProductPrice Function
+    ========================================================= */
     function getProductPrice() {
-        const configPrice =
-            getSallaConfig('page.price');
+        let regularPrice = ''; // السعر الأصلي / قبل الخصم
+        let salePrice = '';    // السعر بعد الخصم
 
-        if (configPrice) {
-            return String(configPrice);
+        // 1. محاولة قراءة الأسعار من كائن سلة المباشر
+        try {
+            if (window.salla && window.salla.product) {
+                const prod = window.salla.product;
+                if (prod.regular_price || prod.compare_price) {
+                    regularPrice = String(prod.regular_price || prod.compare_price).trim();
+                }
+                if (prod.price) {
+                    salePrice = String(prod.price).trim();
+                }
+            }
+        } catch (e) {}
+
+        // 2. محاولة قراءة الأسعار من Salla Config
+        if (!regularPrice && !salePrice) {
+            const cfgPrice = getSallaConfig('page.price');
+            const cfgRegularPrice = getSallaConfig('page.regular_price') || getSallaConfig('page.compare_price');
+
+            if (cfgRegularPrice) regularPrice = String(cfgRegularPrice).trim();
+            if (cfgPrice) salePrice = String(cfgPrice).trim();
         }
 
-        const selectors = [
-            '[class*="price"]',
-            '[class*="product-price"]',
-            '[data-product-price]'
-        ];
+        // 3. الفحص عبر عناصر DOM في الصفحة إذا لم تتوفر البيانات أعلاه
+        if (!regularPrice && !salePrice) {
+            // البحث عن السعر القديم (المشطوب / قبل الخصم)
+            const oldPriceElem = document.querySelector(
+                '.price-regular, .price-before, .regular-price, del, s, [class*="regular-price"], [class*="before-discount"]'
+            );
+            if (oldPriceElem && /\d/.test(oldPriceElem.textContent)) {
+                regularPrice = oldPriceElem.textContent.trim().replace(/\s+/g, ' ');
+            }
 
-        for (const selector of selectors) {
-            const elements =
-                document.querySelectorAll(selector);
+            // البحث عن السعر الحالي (بعد الخصم)
+            const currentPriceElem = document.querySelector(
+                '.product-price, .price-after, .sale-price, [class*="main-price"], [class*="current-price"]'
+            );
+            if (currentPriceElem && /\d/.test(currentPriceElem.textContent)) {
+                salePrice = currentPriceElem.textContent.trim().replace(/\s+/g, ' ');
+            }
 
-            for (const element of elements) {
-                const text =
-                    element.textContent
-                        .trim()
-                        .replace(/\s+/g, ' ');
-
-                if (
-                    text &&
-                    /\d/.test(text)
-                ) {
-                    return text;
+            // محاولة عامة في حال عدم العثور على الكلاسات المحددة
+            if (!regularPrice && !salePrice) {
+                const genericPriceElem = document.querySelector('[class*="price"], [data-product-price]');
+                if (genericPriceElem && /\d/.test(genericPriceElem.textContent)) {
+                    salePrice = genericPriceElem.textContent.trim().replace(/\s+/g, ' ');
                 }
             }
         }
 
-        return '';
+        return {
+            regularPrice: regularPrice,
+            salePrice: salePrice
+        };
     }
 
     function getProductUrl() {
@@ -482,7 +508,7 @@
         const productName =
             getProductName();
 
-        const productPrice =
+        const priceInfo =
             getProductPrice();
 
         const productUrl =
@@ -495,9 +521,16 @@
         message +=
             `\n\nالمنتج: ${productName}`;
 
-        if (productPrice) {
-            message +=
-                `\nالسعر: ${productPrice}`;
+        /*
+         * صياغة الأسعار حسب وجود التخفيض أو عدمه
+         */
+        if (priceInfo.regularPrice && priceInfo.salePrice && priceInfo.regularPrice !== priceInfo.salePrice) {
+            message += `\nالسعر قبل الخصم: ${priceInfo.regularPrice}`;
+            message += `\nالسعر بعد الخصم: ${priceInfo.salePrice}`;
+        } else if (priceInfo.salePrice) {
+            message += `\nالسعر الأصلي: ${priceInfo.salePrice}`;
+        } else if (priceInfo.regularPrice) {
+            message += `\nالسعر الأصلي: ${priceInfo.regularPrice}`;
         }
 
         message +=
