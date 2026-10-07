@@ -652,12 +652,16 @@
              * بدل ما يظهر على الجنب.
              */
             if (target !== card) {
-                target.style.flexWrap = 'wrap';
-            }
+    target.style.display = 'flex';
+    target.style.flexWrap = 'wrap';
+}
 
-            button.style.order = '9999';
+button.style.order = '9999';
+button.style.flex = '0 0 100%';
+button.style.width = '100%';
+button.style.maxWidth = '100%';
 
-            target.appendChild(button);
+target.appendChild(button);
         }
     }
 
