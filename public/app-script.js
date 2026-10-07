@@ -293,7 +293,9 @@
 
             if (attribute) {
                 const product =
-                    parseProduct(attribute);
+                    parseProduct(
+                        attribute
+                    );
 
                 if (product) {
                     return product;
@@ -395,9 +397,6 @@
         let current = null;
         let original = null;
 
-        /*
-         * Sale price + regular price
-         */
         if (
             salePrice !== null &&
             regularPrice !== null &&
@@ -407,9 +406,6 @@
             original = regularPrice;
         }
 
-        /*
-         * Price + regular price
-         */
         else if (
             price !== null &&
             regularPrice !== null &&
@@ -419,9 +415,6 @@
             original = regularPrice;
         }
 
-        /*
-         * Sale price + normal price
-         */
         else if (
             salePrice !== null &&
             price !== null &&
@@ -448,9 +441,7 @@
         }
 
         const currency =
-            (
-                product.currency
-            ) ||
+            product.currency ||
             (
                 product.price &&
                 typeof product.price === 'object' &&
@@ -674,16 +665,12 @@
         }
 
         return false;
-    }
-
+                }
     /* =========================
        Card Out Of Stock
     ========================= */
 
     function isCardOutOfStock(card, product) {
-        /*
-         * First use Salla product data
-         */
         if (product) {
             if (
                 product.is_available === false ||
@@ -710,9 +697,6 @@
             }
         }
 
-        /*
-         * Then check the button inside the card
-         */
         const productButton =
             card.querySelector(
                 'salla-add-product-button'
@@ -764,9 +748,6 @@
             }
         }
 
-        /*
-         * Finally check visible card text
-         */
         const cardText =
             (
                 card.textContent ||
@@ -849,4 +830,406 @@
 
         let message =
             settings.customMessage ||
-         
+            'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
+
+        message +=
+            `\n\nالمنتج: ${productName}`;
+
+        if (productPrice) {
+            message +=
+                `\nالسعر: ${productPrice}`;
+        }
+
+        message +=
+            `\nالرابط: ${productUrl}`;
+
+        return (
+            'https://wa.me/' +
+            number +
+            '?text=' +
+            encodeURIComponent(message)
+        );
+    }
+
+    /* =========================
+       Create Product Button
+    ========================= */
+
+    function createButton() {
+        if (
+            document.getElementById(
+                BUTTON_ID
+            )
+        ) {
+            return;
+        }
+
+        const productButton =
+            findProductButton();
+
+        if (!productButton) {
+            return;
+        }
+
+        const whatsappUrl =
+            createWhatsAppUrl(
+                getProductName(),
+                getProductPrice(),
+                getProductUrl()
+            );
+
+        if (!whatsappUrl) {
+            return;
+        }
+
+        const button =
+            document.createElement('a');
+
+        button.id =
+            BUTTON_ID;
+
+        button.href =
+            whatsappUrl;
+
+        button.target =
+            '_blank';
+
+        button.rel =
+            'noopener noreferrer';
+
+        button.textContent =
+            '🔔 أبلغني عبر واتساب عند توفر المنتج';
+
+        button.style.cssText = `
+            display:block;
+            width:100%;
+            margin-top:12px;
+            padding:14px 18px;
+            background:#25D366;
+            color:#ffffff;
+            border-radius:12px;
+            text-align:center;
+            text-decoration:none;
+            font-size:15px;
+            font-weight:700;
+            line-height:1.4;
+            box-sizing:border-box;
+            cursor:pointer;
+            transition:opacity .2s ease;
+        `;
+
+        button.addEventListener(
+            'mouseenter',
+            function () {
+                button.style.opacity =
+                    '0.88';
+            }
+        );
+
+        button.addEventListener(
+            'mouseleave',
+            function () {
+                button.style.opacity =
+                    '1';
+            }
+        );
+
+        productButton.insertAdjacentElement(
+            'afterend',
+            button
+        );
+    }
+
+    /* =========================
+       Product Page
+       ORIGINAL WORKING LOGIC
+    ========================= */
+
+    async function checkProduct() {
+        const pageId =
+            getSallaConfig('page.id');
+
+        if (!pageId) {
+            return;
+        }
+
+        const outOfStock =
+            isOutOfStock();
+
+        if (!outOfStock) {
+            const existing =
+                document.getElementById(
+                    BUTTON_ID
+                );
+
+            if (existing) {
+                existing.remove();
+            }
+
+            return;
+        }
+
+        const loadedSettings =
+            await loadSettings();
+
+        if (!loadedSettings) {
+            return;
+        }
+
+        createButton();
+    }
+
+    /* =========================
+       Homepage Product Cards
+    ========================= */
+
+    async function checkProductCards() {
+        const cards =
+            document.querySelectorAll(
+                'salla-product-card'
+            );
+
+        if (!cards.length) {
+            return;
+        }
+
+        const loadedSettings =
+            await loadSettings();
+
+        if (!loadedSettings) {
+            return;
+        }
+
+        cards.forEach(function (card) {
+            let button =
+                card.querySelector(
+                    '.' +
+                    CARD_BUTTON_CLASS
+                );
+
+            const product =
+                getCardProduct(card);
+
+            const outOfStock =
+                isCardOutOfStock(
+                    card,
+                    product
+                );
+
+            if (!outOfStock) {
+                if (button) {
+                    button.remove();
+                }
+
+                return;
+            }
+
+            const productName =
+                (
+                    product &&
+                    product.name
+                ) ||
+                (
+                    card.querySelector(
+                        '[class*="product-title"], [class*="product-name"], h3, h2'
+                    )?.textContent || ''
+                ).trim() ||
+                'هذا المنتج';
+
+            const productPrice =
+                getCardPrice(
+                    product
+                );
+
+            const productUrl =
+                getCardUrl(
+                    card,
+                    product
+                );
+
+            const whatsappUrl =
+                createWhatsAppUrl(
+                    productName,
+                    productPrice,
+                    productUrl
+                );
+
+            if (!whatsappUrl) {
+                return;
+            }
+
+            if (button) {
+                button.href =
+                    whatsappUrl;
+
+                return;
+            }
+
+            /*
+             * زر صغير مناسب لكارت الرئيسية
+             */
+            button =
+                document.createElement('a');
+
+            button.className =
+                CARD_BUTTON_CLASS;
+
+            button.href =
+                whatsappUrl;
+
+            button.target =
+                '_blank';
+
+            button.rel =
+                'noopener noreferrer';
+
+            button.textContent =
+                '🔔 أبلغني عند التوفر';
+
+            button.style.cssText = `
+                display:block;
+                width:100%;
+                margin-top:8px;
+                padding:9px 8px;
+                background:#25D366;
+                color:#ffffff;
+                border-radius:8px;
+                text-align:center;
+                text-decoration:none;
+                font-size:12px;
+                font-weight:700;
+                line-height:1.3;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                box-sizing:border-box;
+                cursor:pointer;
+                transition:opacity .2s ease;
+            `;
+
+            button.addEventListener(
+                'mouseenter',
+                function () {
+                    button.style.opacity =
+                        '0.88';
+                }
+            );
+
+            button.addEventListener(
+                'mouseleave',
+                function () {
+                    button.style.opacity =
+                        '1';
+                }
+            );
+
+            const cardProductButton =
+                card.querySelector(
+                    'salla-add-product-button'
+                );
+
+            if (cardProductButton) {
+                cardProductButton.insertAdjacentElement(
+                    'afterend',
+                    button
+                );
+            } else {
+                card.appendChild(
+                    button
+                );
+            }
+        });
+    }
+
+    /* =========================
+       Observe Salla Rendering
+    ========================= */
+
+    let checkTimer = null;
+
+    function scheduleCheck() {
+        clearTimeout(checkTimer);
+
+        checkTimer =
+            setTimeout(
+                function () {
+                    checkProduct();
+                    checkProductCards();
+                },
+                300
+            );
+    }
+
+    const observer =
+        new MutationObserver(
+            function () {
+                scheduleCheck();
+            }
+        );
+
+    /* =========================
+       Start
+    ========================= */
+
+    function start() {
+        if (document.body) {
+            observer.observe(
+                document.body,
+                {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: [
+                        'product-status',
+                        'status',
+                        'disabled',
+                        'aria-disabled'
+                    ]
+                }
+            );
+        }
+
+        checkProduct();
+        checkProductCards();
+
+        setTimeout(
+            function () {
+                checkProduct();
+                checkProductCards();
+            },
+            1000
+        );
+
+        setTimeout(
+            function () {
+                checkProduct();
+                checkProductCards();
+            },
+            2500
+        );
+
+        setTimeout(
+            function () {
+                checkProduct();
+                checkProductCards();
+            },
+            5000
+        );
+    }
+
+    if (
+        document.readyState ===
+        'loading'
+    ) {
+        document.addEventListener(
+            'DOMContentLoaded',
+            start,
+            {
+                once: true
+            }
+        );
+    } else {
+        start();
+    }
+
+})();
