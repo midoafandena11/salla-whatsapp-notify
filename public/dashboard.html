@@ -1,12 +1,34 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>إعدادات تطبيق التنبيه عبر الواتساب</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        إعدادات تطبيق التنبيه عبر الواتساب
+    </title>
+
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+    >
+
+    <link
+        rel="preconnect"
+        href="https://fonts.gstatic.com"
+        crossorigin
+    >
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap"
+        rel="stylesheet"
+    >
+
     <style>
         * {
             box-sizing: border-box;
@@ -17,29 +39,41 @@
             background-color: #f8f9fa;
             margin: 0;
             padding: 20px;
+
             display: flex;
             justify-content: center;
             align-items: center;
+
             min-height: 100vh;
+
             color: #1f2937;
         }
 
         .card {
             background-color: #ffffff;
+
             padding: 32px 24px;
+
             border-radius: 20px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+
+            box-shadow:
+                0 4px 20px rgba(0, 0, 0, 0.03);
+
             width: 100%;
             max-width: 440px;
         }
 
         h2 {
             color: #0d5c46;
+
             font-size: 22px;
             font-weight: 700;
+
             text-align: center;
+
             margin-top: 0;
             margin-bottom: 28px;
+
             line-height: 1.4;
         }
 
@@ -49,29 +83,47 @@
 
         label {
             display: block;
+
             margin-bottom: 8px;
+
             font-size: 15px;
             font-weight: 700;
+
             color: #111827;
         }
 
-        input[type="text"], textarea {
+        input[type="text"],
+        textarea {
             width: 100%;
+
             padding: 14px 16px;
+
             border: 1px solid #e5e7eb;
+
             border-radius: 12px;
+
             font-size: 15px;
             color: #374151;
+
             outline: none;
+
             background-color: #ffffff;
-            transition: border-color 0.2s;
+
+            transition:
+                border-color 0.2s,
+                box-shadow 0.2s;
         }
 
-        input[type="text"]:focus, textarea:focus {
+        input[type="text"]:focus,
+        textarea:focus {
             border-color: #00b074;
+
+            box-shadow:
+                0 0 0 3px rgba(0, 176, 116, 0.08);
         }
 
-        input[type="text"]::placeholder, textarea::placeholder {
+        input[type="text"]::placeholder,
+        textarea::placeholder {
             color: #9ca3af;
         }
 
@@ -82,108 +134,389 @@
 
         .hint {
             font-size: 12px;
+
             color: #9ca3af;
+
             margin-top: 6px;
+
             line-height: 1.4;
         }
 
         button {
             width: 100%;
+
             background-color: #00b074;
+
             color: #ffffff;
+
             border: none;
+
             padding: 14px;
+
             border-radius: 12px;
+
             font-size: 16px;
             font-weight: 700;
+
             cursor: pointer;
+
             margin-top: 10px;
-            transition: background-color 0.2s;
+
+            transition:
+                background-color 0.2s,
+                opacity 0.2s;
         }
 
         button:hover {
             background-color: #009663;
         }
 
-        .alert-success {
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .message {
             display: none;
+
             margin-top: 18px;
+
             padding: 12px;
-            background-color: #e6f4ea;
-            border: 1px solid #b7e1cd;
-            color: #137333;
+
             border-radius: 10px;
+
             text-align: center;
+
             font-size: 14px;
+
             font-weight: 700;
+
+            line-height: 1.5;
+        }
+
+        .message.success {
+            background-color: #e6f4ea;
+
+            border: 1px solid #b7e1cd;
+
+            color: #137333;
+        }
+
+        .message.error {
+            background-color: #fce8e6;
+
+            border: 1px solid #f5c2c0;
+
+            color: #b3261e;
+        }
+
+        .loading {
+            text-align: center;
+
+            color: #6b7280;
+
+            font-size: 13px;
+
+            margin-bottom: 18px;
         }
     </style>
 </head>
+
 <body>
 
     <div class="card">
-        <h2>إعدادات تطبيق التنبيه عبر<br>الواتساب</h2>
 
-        <div class="form-group">
-            <label for="whatsappNumber">رقم الواتساب الخاص بالمتجر:</label>
-            <input type="text" id="whatsappNumber" placeholder="مثال: 966500000000">
-            <div class="hint">أدخل الرقم مع مفتاح الدولة بدون (+) (مثال: 966 للمملكة العربية السعودية).</div>
+        <h2>
+            إعدادات تطبيق التنبيه عبر<br>
+            الواتساب
+        </h2>
+
+        <div
+            id="loadingMessage"
+            class="loading"
+        >
+            جاري تحميل الإعدادات...
         </div>
 
         <div class="form-group">
-            <label for="customMessage">نص الرسالة الترحيبية:</label>
-            <textarea id="customMessage" placeholder="هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج."></textarea>
-            <div class="hint">سيتم إضافة اسم المنتج، السعر، والرابط تلقائياً بأسفل هذه الرسالة.</div>
+
+            <label for="whatsappNumber">
+                رقم الواتساب الخاص بالمتجر:
+            </label>
+
+            <input
+                type="text"
+                id="whatsappNumber"
+                placeholder="مثال: 966500000000"
+                autocomplete="tel"
+            >
+
+            <div class="hint">
+                أدخل الرقم مع مفتاح الدولة بدون (+)
+                (مثال: 966 للمملكة العربية السعودية).
+            </div>
+
         </div>
 
-        <button onclick="saveSettings()">حفظ الإعدادات</button>
+        <div class="form-group">
 
-        <div id="successAlert" class="alert-success">
-            تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الان
+            <label for="customMessage">
+                نص الرسالة الترحيبية:
+            </label>
+
+            <textarea
+                id="customMessage"
+                placeholder="هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج."
+            ></textarea>
+
+            <div class="hint">
+                سيتم إضافة اسم المنتج، السعر،
+                والرابط تلقائياً بأسفل هذه الرسالة.
+            </div>
+
         </div>
+
+        <button
+            id="saveButton"
+            type="button"
+            onclick="saveSettings()"
+        >
+            حفظ الإعدادات
+        </button>
+
+        <div
+            id="statusMessage"
+            class="message"
+        ></div>
+
     </div>
 
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const merchantId = urlParams.get('merchant_id') || '';
+        const urlParams =
+            new URLSearchParams(
+                window.location.search
+            );
 
-        if (merchantId) {
-            fetch(`/api/settings?merchant_id=${merchantId}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.whatsappNumber) document.getElementById('whatsappNumber').value = data.whatsappNumber;
-                    if (data.customMessage) document.getElementById('customMessage').value = data.customMessage;
-                })
-                .catch(err => console.error('خطأ في جلب البيانات:', err));
+        const merchantId =
+            urlParams.get('merchant_id') || '';
+
+        const whatsappInput =
+            document.getElementById(
+                'whatsappNumber'
+            );
+
+        const messageInput =
+            document.getElementById(
+                'customMessage'
+            );
+
+        const saveButton =
+            document.getElementById(
+                'saveButton'
+            );
+
+        const statusMessage =
+            document.getElementById(
+                'statusMessage'
+            );
+
+        const loadingMessage =
+            document.getElementById(
+                'loadingMessage'
+            );
+
+        function showMessage(
+            message,
+            type
+        ) {
+            statusMessage.textContent =
+                message;
+
+            statusMessage.className =
+                `message ${type}`;
+
+            statusMessage.style.display =
+                'block';
         }
 
-        function saveSettings() {
-            const whatsappNumber = document.getElementById('whatsappNumber').value;
-            const customMessage = document.getElementById('customMessage').value;
+        function hideMessage() {
+            statusMessage.style.display =
+                'none';
+        }
 
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    merchant_id: merchantId,
-                    whatsappNumber: whatsappNumber,
-                    customMessage: customMessage
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    const alertBox = document.getElementById('successAlert');
-                    alertBox.style.display = 'block';
-                } else {
-                    alert('حدث خطأ أثناء حفظ البيانات.');
+        async function loadSettings() {
+
+            if (!merchantId) {
+
+                loadingMessage.style.display =
+                    'none';
+
+                showMessage(
+                    'لم يتم التعرف على المتجر. افتح لوحة التحكم من داخل تطبيق سلة بعد تثبيت التطبيق.',
+                    'error'
+                );
+
+                saveButton.disabled = true;
+
+                return;
+            }
+
+            try {
+
+                const response =
+                    await fetch(
+                        `/api/settings?merchant_id=${encodeURIComponent(
+                            merchantId
+                        )}`
+                    );
+
+                const data =
+                    await response.json();
+
+                if (!response.ok) {
+                    throw new Error(
+                        data.error ||
+                        'Failed to load settings'
+                    );
                 }
-            })
-            .catch(err => {
-                alert('تعذر الاتصال بالسيرفر.');
-            });
+
+                if (data.whatsappNumber) {
+                    whatsappInput.value =
+                        data.whatsappNumber;
+                }
+
+                if (data.customMessage) {
+                    messageInput.value =
+                        data.customMessage;
+                }
+
+            } catch (error) {
+
+                console.error(
+                    'Settings load error:',
+                    error
+                );
+
+                showMessage(
+                    'تعذر تحميل الإعدادات. حاول تحديث الصفحة.',
+                    'error'
+                );
+
+            } finally {
+
+                loadingMessage.style.display =
+                    'none';
+            }
         }
+
+        async function saveSettings() {
+
+            hideMessage();
+
+            if (!merchantId) {
+
+                showMessage(
+                    'لا يمكن حفظ البيانات لأن رقم المتجر غير موجود.',
+                    'error'
+                );
+
+                return;
+            }
+
+            const whatsappNumber =
+                whatsappInput.value.trim();
+
+            const customMessage =
+                messageInput.value.trim();
+
+            if (!whatsappNumber) {
+
+                showMessage(
+                    'من فضلك أدخل رقم الواتساب الخاص بالمتجر.',
+                    'error'
+                );
+
+                whatsappInput.focus();
+
+                return;
+            }
+
+            saveButton.disabled = true;
+
+            saveButton.textContent =
+                'جاري الحفظ...';
+
+            try {
+
+                const response =
+                    await fetch(
+                        '/api/settings',
+                        {
+                            method: 'POST',
+
+                            headers: {
+                                'Content-Type':
+                                    'application/json'
+                            },
+
+                            body:
+                                JSON.stringify({
+                                    merchant_id:
+                                        merchantId,
+
+                                    whatsappNumber:
+                                        whatsappNumber,
+
+                                    customMessage:
+                                        customMessage
+                                })
+                        }
+                    );
+
+                const data =
+                    await response.json();
+
+                if (
+                    !response.ok ||
+                    !data.success
+                ) {
+                    throw new Error(
+                        data.error ||
+                        'حدث خطأ أثناء حفظ البيانات.'
+                    );
+                }
+
+                showMessage(
+                    'تم حفظ البيانات بنجاح، يمكنك إغلاق الصفحة الآن.',
+                    'success'
+                );
+
+            } catch (error) {
+
+                console.error(
+                    'Settings save error:',
+                    error
+                );
+
+                showMessage(
+                    error.message ||
+                    'تعذر حفظ البيانات. حاول مرة أخرى.',
+                    'error'
+                );
+
+            } finally {
+
+                saveButton.disabled =
+                    false;
+
+                saveButton.textContent =
+                    'حفظ الإعدادات';
+            }
+        }
+
+        loadSettings();
     </script>
 
 </body>
+
 </html>
