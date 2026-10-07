@@ -1,11 +1,6 @@
 (function () {
     'use strict';
 
-    /* =========================
-       Salla WhatsApp Notify
-       Product Page + Homepage
-    ========================= */
-
     const API_BASE =
         'https://salla-whatsapp-notify.onrender.com';
 
@@ -22,24 +17,20 @@
     let settingsMerchantId = null;
     let settingsPromise = null;
 
-    /* =========================
-       Helpers
-    ========================= */
-
     function getMerchantId() {
         try {
-            const urlParams =
+            const params =
                 new URLSearchParams(
                     window.location.search
                 );
 
-            const urlMerchantId =
-                urlParams.get('merchant_id');
+            const id =
+                params.get('merchant_id');
 
-            if (urlMerchantId) {
-                return String(urlMerchantId);
+            if (id) {
+                return String(id);
             }
-        } catch (error) {}
+        } catch (e) {}
 
         try {
             if (
@@ -47,20 +38,21 @@
                 salla.config &&
                 typeof salla.config.get === 'function'
             ) {
-                const merchantId =
+                const id =
                     salla.config.get('store.id');
 
-                if (merchantId) {
-                    return String(merchantId);
+                if (id) {
+                    return String(id);
                 }
             }
-        } catch (error) {}
+        } catch (e) {}
 
         return '';
     }
 
     async function getSettings() {
-        const merchantId = getMerchantId();
+        const merchantId =
+            getMerchantId();
 
         if (
             settingsCache &&
@@ -78,33 +70,37 @@
                 ? `${API_BASE}/api/settings?merchant_id=${encodeURIComponent(merchantId)}`
                 : `${API_BASE}/api/settings`;
 
-        settingsPromise = fetch(url)
-            .then(function (response) {
-                if (!response.ok) {
-                    throw new Error(
-                        'Settings request failed'
+        settingsPromise =
+            fetch(url)
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error(
+                            'Settings request failed'
+                        );
+                    }
+
+                    return response.json();
+                })
+                .then(function (data) {
+                    settingsCache =
+                        data || {};
+
+                    settingsMerchantId =
+                        merchantId;
+
+                    return settingsCache;
+                })
+                .catch(function (error) {
+                    console.error(
+                        '[Salla WhatsApp Notify]',
+                        error
                     );
-                }
 
-                return response.json();
-            })
-            .then(function (data) {
-                settingsCache = data || {};
-                settingsMerchantId = merchantId;
-
-                return settingsCache;
-            })
-            .catch(function (error) {
-                console.error(
-                    '[Salla WhatsApp Notify]',
-                    error
-                );
-
-                return null;
-            })
-            .finally(function () {
-                settingsPromise = null;
-            });
+                    return null;
+                })
+                .finally(function () {
+                    settingsPromise = null;
+                });
 
         return settingsPromise;
     }
@@ -157,35 +153,24 @@
             }
         }
 
-        let text = String(value)
-            .trim();
+        let text =
+            String(value).trim();
 
         if (!text) {
             return null;
         }
 
-        /*
-         * Arabic / Persian digits -> English
-         */
         text = text
             .replace(/[٠-٩]/g, function (d) {
                 return String(
-                    '٠١٢٣٤٥٦٧٨٩'
-                        .indexOf(d)
+                    '٠١٢٣٤٥٦٧٨٩'.indexOf(d)
                 );
             })
             .replace(/[۰-۹]/g, function (d) {
                 return String(
-                    '۰۱۲۳۴۵۶۷۸۹'
-                        .indexOf(d)
+                    '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)
                 );
-            });
-
-        /*
-         * Remove currency / text.
-         * Keep decimal separators.
-         */
-        text = text
+            })
             .replace(/,/g, '')
             .replace(/٬/g, '')
             .replace(/[^\d.-]/g, '');
@@ -194,7 +179,8 @@
             return null;
         }
 
-        const number = Number(text);
+        const number =
+            Number(text);
 
         return Number.isFinite(number)
             ? number
@@ -216,24 +202,20 @@
     }
 
     function getNumericValuesFromText(text) {
-        const result = [];
-
         if (!text) {
-            return result;
+            return [];
         }
 
         let normalized =
             String(text)
                 .replace(/[٠-٩]/g, function (d) {
                     return String(
-                        '٠١٢٣٤٥٦٧٨٩'
-                            .indexOf(d)
+                        '٠١٢٣٤٥٦٧٨٩'.indexOf(d)
                     );
                 })
                 .replace(/[۰-۹]/g, function (d) {
                     return String(
-                        '۰۱۲۳۴۵۶۷۸۹'
-                            .indexOf(d)
+                        '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)
                     );
                 });
 
@@ -241,6 +223,8 @@
             normalized.match(
                 /(?:\d+(?:[.,]\d+)?)/g
             ) || [];
+
+        const result = [];
 
         matches.forEach(function (item) {
             const value =
@@ -258,10 +242,6 @@
 
         return result;
     }
-
-    /* =========================
-       Product Price Extraction
-    ========================= */
 
     function priceObjectValue(value) {
         if (
@@ -329,12 +309,6 @@
                 product.sale_price
             );
 
-        /*
-         * Salla may expose sale_price as 0
-         * when there is no sale.
-         * Therefore 0 is NOT automatically
-         * considered a sale.
-         */
         if (
             sale !== null &&
             sale > 0 &&
@@ -344,10 +318,6 @@
             current = sale;
         }
 
-        /*
-         * If current is missing but a valid
-         * sale price exists, use it.
-         */
         if (
             current === null &&
             sale !== null &&
@@ -356,10 +326,6 @@
             current = sale;
         }
 
-        /*
-         * If there is no real difference,
-         * show one price only.
-         */
         if (
             current !== null &&
             original !== null &&
@@ -391,7 +357,7 @@
             return null;
         }
 
-        let text =
+        const text =
             raw.trim();
 
         if (!text) {
@@ -400,24 +366,21 @@
 
         try {
             return JSON.parse(text);
-        } catch (error) {}
+        } catch (e) {}
 
-        /*
-         * Try decoding HTML entities
-         * before JSON parsing.
-         */
         try {
             const textarea =
                 document.createElement(
                     'textarea'
                 );
 
-            textarea.innerHTML = text;
+            textarea.innerHTML =
+                text;
 
             return JSON.parse(
                 textarea.value
             );
-        } catch (error) {}
+        } catch (e) {}
 
         return null;
     }
@@ -428,9 +391,7 @@
         }
 
         try {
-            if (
-                card.product
-            ) {
+            if (card.product) {
                 const product =
                     parseProductData(
                         card.product
@@ -440,7 +401,7 @@
                     return product;
                 }
             }
-        } catch (error) {}
+        } catch (e) {}
 
         try {
             const raw =
@@ -454,12 +415,11 @@
             if (product) {
                 return product;
             }
-        } catch (error) {}
+        } catch (e) {}
 
         return null;
     }
-
-    function getPageProductObject() {
+        function getPageProductObject() {
         const candidates = [];
 
         try {
@@ -471,7 +431,7 @@
                     salla.product
                 );
             }
-        } catch (error) {}
+        } catch (e) {}
 
         try {
             if (
@@ -480,9 +440,7 @@
                 typeof salla.config.get === 'function'
             ) {
                 candidates.push(
-                    salla.config.get(
-                        'product'
-                    )
+                    salla.config.get('product')
                 );
 
                 candidates.push(
@@ -491,7 +449,7 @@
                     )
                 );
             }
-        } catch (error) {}
+        } catch (e) {}
 
         for (
             let i = 0;
@@ -527,13 +485,6 @@
             return null;
         }
 
-        /*
-         * One element should normally
-         * represent one price.
-         * Take the last numeric value
-         * to avoid duplicated accessibility
-         * text such as "50 50".
-         */
         return values[
             values.length - 1
         ];
@@ -550,9 +501,6 @@
         let current = null;
         let original = null;
 
-        /*
-         * First: explicit Salla price component.
-         */
         const priceComponents =
             root.querySelectorAll(
                 'salla-product-price'
@@ -572,38 +520,37 @@
                 );
 
             if (
-                value !== null
+                value === null
             ) {
-                const isOld =
-                    element.hasAttribute(
-                        'regular-price'
-                    ) ||
-                    element.hasAttribute(
-                        'compare-price'
-                    ) ||
-                    element.classList.contains(
-                        'line-through'
-                    ) ||
-                    element.classList.contains(
-                        'price-before'
-                    );
+                continue;
+            }
 
-                if (
-                    isOld &&
-                    original === null
-                ) {
-                    original = value;
-                } else if (
-                    current === null
-                ) {
-                    current = value;
-                }
+            const isOld =
+                element.hasAttribute(
+                    'regular-price'
+                ) ||
+                element.hasAttribute(
+                    'compare-price'
+                ) ||
+                element.classList.contains(
+                    'line-through'
+                ) ||
+                element.classList.contains(
+                    'price-before'
+                );
+
+            if (
+                isOld &&
+                original === null
+            ) {
+                original = value;
+            } else if (
+                current === null
+            ) {
+                current = value;
             }
         }
 
-        /*
-         * Explicit old/current price selectors.
-         */
         const oldSelectors = [
             '.price-regular',
             '.price-before',
@@ -624,7 +571,9 @@
 
         oldSelectors.forEach(
             function (selector) {
-                if (original !== null) {
+                if (
+                    original !== null
+                ) {
                     return;
                 }
 
@@ -650,7 +599,9 @@
 
         currentSelectors.forEach(
             function (selector) {
-                if (current !== null) {
+                if (
+                    current !== null
+                ) {
                     return;
                 }
 
@@ -674,12 +625,6 @@
             }
         );
 
-        /*
-         * Last fallback:
-         * inspect visible price-like elements
-         * individually, never the entire card
-         * as one text string.
-         */
         if (
             current === null
         ) {
@@ -714,10 +659,6 @@
             } else if (
                 values.length >= 2
             ) {
-                /*
-                 * Usually higher = original
-                 * and lower = current.
-                 */
                 const sorted =
                     values.slice().sort(
                         function (a, b) {
@@ -748,9 +689,6 @@
             original: original
         };
     }
-       /* =========================
-       Final Price Details
-    ========================= */
 
     function getProductPriceDetails(root) {
         const product =
@@ -793,10 +731,6 @@
             document
         );
     }
-
-    /* =========================
-       Product Name
-    ========================= */
 
     function getProductName(root) {
         if (!root) {
@@ -851,7 +785,7 @@
                         return text;
                     }
                 }
-            } catch (error) {}
+            } catch (e) {}
         }
 
         try {
@@ -870,14 +804,10 @@
             if (alt) {
                 return alt;
             }
-        } catch (error) {}
+        } catch (e) {}
 
         return '';
     }
-
-    /* =========================
-       Product URL
-    ========================= */
 
     function getProductUrl(root) {
         if (!root) {
@@ -897,7 +827,7 @@
                     window.location.origin
                 ).href;
             }
-        } catch (error) {}
+        } catch (e) {}
 
         const selectors = [
             'a[href*="/p"]',
@@ -944,15 +874,11 @@
                         ).href;
                     }
                 }
-            } catch (error) {}
+            } catch (e) {}
         }
 
         return window.location.href;
     }
-
-    /* =========================
-       Out Of Stock Detection
-    ========================= */
 
     function hasOutOfStockText(root) {
         if (!root) {
@@ -1054,7 +980,7 @@
                     return true;
                 }
             }
-        } catch (error) {}
+        } catch (e) {}
 
         return Boolean(
             document.querySelector(
@@ -1073,10 +999,6 @@
             )
         );
     }
-
-    /* =========================
-       Message
-    ========================= */
 
     function buildMessage(
         settings,
@@ -1135,13 +1057,8 @@
         }
 
         return message;
-    }
-
-    /* =========================
-       Create Button
-    ========================= */
-
-    function createWhatsAppButton(
+            }
+        function createWhatsAppButton(
         settings,
         target,
         isMini,
@@ -1236,10 +1153,6 @@
         return button;
     }
 
-    /* =========================
-       Product Page
-    ========================= */
-
     async function injectProductPageButton() {
         if (!isProductPage()) {
             return;
@@ -1307,10 +1220,6 @@
         );
     }
 
-    /* =========================
-       Find Product Cards
-    ========================= */
-
     function getProductCards() {
         const cards = [];
         const seen = new Set();
@@ -1338,22 +1247,19 @@
                                     seen.add(
                                         card
                                     );
+
                                     cards.push(
                                         card
                                     );
                                 }
                             }
                         );
-                } catch (error) {}
+                } catch (e) {}
             }
         );
 
         return cards;
     }
-
-    /* =========================
-       Homepage / Product Grid
-    ========================= */
 
     async function injectHomepageButtons() {
         if (isProductPage()) {
@@ -1389,10 +1295,6 @@
                     return;
                 }
 
-                /*
-                 * First use Salla's card data
-                 * when available.
-                 */
                 const product =
                     getCardProduct(card);
 
@@ -1421,9 +1323,6 @@
                     }
                 }
 
-                /*
-                 * DOM fallback.
-                 */
                 if (
                     !outOfStock &&
                     hasOutOfStockText(
@@ -1446,12 +1345,6 @@
                     return;
                 }
 
-                /*
-                 * Put the button after the
-                 * purchase area when possible,
-                 * otherwise at the bottom
-                 * of the product card.
-                 */
                 const purchaseTarget =
                     card.querySelector(
                         'salla-add-to-cart-button'
@@ -1484,10 +1377,6 @@
         );
     }
 
-    /* =========================
-       Main Scan
-    ========================= */
-
     async function scan() {
         try {
             await injectProductPageButton();
@@ -1500,15 +1389,8 @@
         }
     }
 
-    /*
-     * Initial scan.
-     */
     scan();
 
-    /*
-     * Salla themes frequently render
-     * product cards dynamically.
-     */
     let scanTimer = null;
 
     const observer =
@@ -1538,14 +1420,9 @@
         }
     );
 
-    /*
-     * One additional delayed scan
-     * for components that initialize
-     * after the first render.
-     */
     setTimeout(
         scan,
         1500
     );
 
-})(); 
+})();
