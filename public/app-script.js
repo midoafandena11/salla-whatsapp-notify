@@ -14,6 +14,8 @@
     let settings = null;
     let settingsPromise = null;
 
+    let productButtonCreating = false;
+
     /* =========================
        Basic Helpers
     ========================= */
@@ -100,10 +102,6 @@
         const id = getMerchantId();
 
         if (!id) {
-            console.warn(
-                'WhatsApp Notify: merchant ID not found'
-            );
-
             return null;
         }
 
@@ -167,7 +165,7 @@
     }
 
     /* =========================
-       Product Normalization
+       Product Helpers
     ========================= */
 
     function getNumber(value) {
@@ -216,6 +214,45 @@
         return null;
     }
 
+    function getCardLink(card) {
+        const link =
+            card.querySelector(
+                'a[href]'
+            );
+
+        return link
+            ? link.href
+            : '';
+    }
+
+    function getCardName(card) {
+        const selectors = [
+            '[class*="product-title"]',
+            '[class*="product-name"]',
+            '[class*="title"]',
+            'h2',
+            'h3'
+        ];
+
+        for (const selector of selectors) {
+            const element =
+                card.querySelector(
+                    selector
+                );
+
+            if (
+                element &&
+                element.textContent.trim()
+            ) {
+                return element.textContent
+                    .trim()
+                    .replace(/\s+/g, ' ');
+            }
+        }
+
+        return '';
+    }
+
     function normalizeProduct(rawProduct, root) {
         const product =
             rawProduct &&
@@ -227,6 +264,12 @@
             product.id ||
             product.product_id ||
             product.productId ||
+            root?.getAttribute?.(
+                'data-product-id'
+            ) ||
+            root?.getAttribute?.(
+                'product-id'
+            ) ||
             null;
 
         let name =
@@ -259,28 +302,22 @@
                 ]
             );
 
-        if (
+        const isCard =
             root &&
             root.matches &&
-            root.matches('salla-product-card')
-        ) {
+            root.matches(
+                'salla-product-card'
+            );
+
+        if (isCard) {
             if (!name) {
                 name =
-                    root.getAttribute(
-                        'product-name'
-                    ) || '';
+                    getCardName(root);
             }
 
             if (!url) {
-                const link =
-                    root.querySelector(
-                        'a[href]'
-                    );
-
-                if (link) {
-                    url =
-                        link.href;
-                }
+                url =
+                    getCardLink(root);
             }
         }
 
@@ -363,82 +400,81 @@
                     'sold-out',
                     'sold_out',
                     'unavailable'
-                ].includes(product.status)
-            ) {
-                return true;
-            }
-        }
-
-        if (root) {
-            const status =
-                root.getAttribute(
-                    'product-status'
-                ) ||
-                root.getAttribute(
-                    'status'
-                ) ||
-                '';
-
-            if (
-                [
-                    'out',
-                    'out-of-stock',
-                    'out_of_stock',
-                    'sold-out',
-                    'sold_out',
-                    'unavailable'
                 ].includes(
-                    String(status)
-                        .trim()
-                        .toLowerCase()
-                )
-            ) {
-                return true;
-            }
-
-            if (
-                root.hasAttribute(
-                    'out-of-stock'
-                )
-            ) {
-                return true;
-            }
-
-            const text =
-                (
-                    root.textContent || ''
-                )
-                    .trim()
-                    .toLowerCase();
-
-            if (
-                text.includes(
-                    'نفدت الكمية'
-                ) ||
-                text.includes(
-                    'نفد المخزون'
-                ) ||
-                text.includes(
-                    'غير متوفر'
-                ) ||
-                text.includes(
-                    'sold out'
-                ) ||
-                text.includes(
-                    'out of stock'
-                ) ||
-                text.includes(
-                    'unavailable'
+                    product.status
                 )
             ) {
                 return true;
             }
         }
 
-        return false;
-    }
+        if (!root) {
+            return false;
+        }
 
-    /* =========================
+        const status =
+            root.getAttribute(
+                'product-status'
+            ) ||
+            root.getAttribute(
+                'status'
+            ) ||
+            '';
+
+        if (
+            [
+                'out',
+                'out-of-stock',
+                'out_of_stock',
+                'sold-out',
+                'sold_out',
+                'unavailable'
+            ].includes(
+                String(status)
+                    .trim()
+                    .toLowerCase()
+            )
+        ) {
+            return true;
+        }
+
+        if (
+            root.hasAttribute(
+                'out-of-stock'
+            )
+        ) {
+            return true;
+        }
+
+        const text =
+            (
+                root.textContent || ''
+            )
+                .trim()
+                .toLowerCase();
+
+        return (
+            text.includes(
+                'نفدت الكمية'
+            ) ||
+            text.includes(
+                'نفد المخزون'
+            ) ||
+            text.includes(
+                'غير متوفر'
+            ) ||
+            text.includes(
+                'sold out'
+            ) ||
+            text.includes(
+                'out of stock'
+            ) ||
+            text.includes(
+                'unavailable'
+            )
+        );
+    }
+        /* =========================
        Product Page Data
     ========================= */
 
@@ -482,22 +518,6 @@
         return {};
     }
 
-    function getProductPageFallbackRoot() {
-        const button =
-            document.querySelector(
-                'salla-add-product-button'
-            );
-
-        if (button) {
-            return button;
-        }
-
-        return document.body;
-    }
-        /* =========================
-       WhatsApp URL
-    ========================= */
-
     function formatProductPrice(product) {
         const current =
             product.price;
@@ -527,11 +547,7 @@
             return `السعر: ${current}`;
         }
 
-        if (original !== null) {
-            return `السعر: ${original}`;
-        }
-
-        return '';
+        return `السعر: ${original}`;
     }
 
     function createWhatsAppUrl(product) {
@@ -542,7 +558,7 @@
             return null;
         }
 
-        let number =
+        const number =
             settings.whatsappNumber
                 .replace(/\D/g, '');
 
@@ -577,10 +593,13 @@
     }
 
     /* =========================
-       Create Same Button
+       Same Button Everywhere
     ========================= */
 
-    function createWhatsAppButton(product, isCard) {
+    function createWhatsAppButton(
+        product,
+        isCard
+    ) {
         const button =
             document.createElement('a');
 
@@ -588,7 +607,8 @@
             button.className =
                 CARD_BUTTON_CLASS;
         } else {
-            button.id = BUTTON_ID;
+            button.id =
+                BUTTON_ID;
         }
 
         button.href =
@@ -606,43 +626,21 @@
         button.style.cssText = `
             display:block;
             width:100%;
-            margin-top:12px;
-            padding:14px 18px;
+            margin-top:${isCard ? '8px' : '12px'};
+            padding:${isCard ? '9px 7px' : '14px 18px'};
             background:#25D366;
             color:#ffffff;
-            border-radius:12px;
+            border-radius:${isCard ? '9px' : '12px'};
             text-align:center;
             text-decoration:none;
-            font-size:15px;
+            font-size:${isCard ? '12px' : '15px'};
             font-weight:700;
-            line-height:1.4;
+            line-height:1.35;
             box-sizing:border-box;
             cursor:pointer;
             transition:opacity .2s ease;
             white-space:normal;
-            overflow:hidden;
-            text-overflow:ellipsis;
         `;
-
-        if (isCard) {
-            button.style.fontSize =
-                'clamp(11px, 3.2cqw, 14px)';
-
-            button.style.padding =
-                '10px 8px';
-
-            button.style.marginTop =
-                '8px';
-
-            button.style.borderRadius =
-                '9px';
-
-            button.style.lineHeight =
-                '1.3';
-
-            button.style.containerType =
-                'inline-size';
-        }
 
         button.addEventListener(
             'mouseenter',
@@ -668,17 +666,35 @@
     ========================= */
 
     async function checkProductPage() {
-        const pageId =
-            getSallaConfig(
-                'page.id'
+        /*
+         * وجود زر سلة الرسمي هو علامة
+         * صفحة المنتج الفعلية.
+         */
+        const productButton =
+            document.querySelector(
+                'salla-add-product-button'
             );
 
-        if (!pageId) {
+        if (!productButton) {
             return;
         }
 
-        const root =
-            getProductPageFallbackRoot();
+        const existing =
+            document.getElementById(
+                BUTTON_ID
+            );
+
+        if (existing) {
+            return;
+        }
+
+        /*
+         * يمنع أكثر من استدعاء async
+         * من إنشاء نفس الزر.
+         */
+        if (productButtonCreating) {
+            return;
+        }
 
         const rawProduct =
             getProductPageRawProduct();
@@ -686,74 +702,57 @@
         const product =
             normalizeProduct(
                 rawProduct,
-                root
+                productButton
             );
 
         const outOfStock =
             isProductOutOfStock(
                 product,
-                root
-            );
-
-        const existing =
-            document.getElementById(
-                BUTTON_ID
+                productButton
             );
 
         if (!outOfStock) {
-            if (existing) {
-                existing.remove();
+            return;
+        }
+
+        productButtonCreating = true;
+
+        try {
+            const loadedSettings =
+                await loadSettings();
+
+            if (!loadedSettings) {
+                return;
             }
 
-            return;
-        }
+            /*
+             * فحص نهائي بعد الانتظار.
+             */
+            if (
+                document.getElementById(
+                    BUTTON_ID
+                )
+            ) {
+                return;
+            }
 
-        const loadedSettings =
-            await loadSettings();
+            const button =
+                createWhatsAppButton(
+                    product,
+                    false
+                );
 
-        if (!loadedSettings) {
-            return;
-        }
+            if (!button.href) {
+                return;
+            }
 
-        if (existing) {
-            return;
-        }
-
-        const productButton =
-            document.querySelector(
-                'salla-add-product-button'
-            ) ||
-            document.querySelector(
-                '[data-product-id] button'
-            ) ||
-            document.querySelector(
-                '.product-form button'
-            ) ||
-            document.querySelector(
-                '.product-details button'
-            ) ||
-            document.querySelector(
-                'button[type="submit"]'
+            productButton.insertAdjacentElement(
+                'afterend',
+                button
             );
-
-        if (!productButton) {
-            return;
+        } finally {
+            productButtonCreating = false;
         }
-
-        const button =
-            createWhatsAppButton(
-                product,
-                false
-            );
-
-        if (!button.href) {
-            return;
-        }
-
-        productButton.insertAdjacentElement(
-            'afterend',
-            button
-        );
     }
 
     /* =========================
@@ -784,7 +783,14 @@
                     card
                 );
 
-            if (!product.id) {
+            /*
+             * حتى لو بيانات Salla الكاملة
+             * لسه ما وصلت، نقدر نعرف الكارت.
+             */
+            if (
+                !product.id &&
+                !getCardLink(card)
+            ) {
                 continue;
             }
 
@@ -835,9 +841,9 @@
 
             target.appendChild(button);
         }
-    }
+        }
         /* =========================
-       One Main Check
+       Main Check
     ========================= */
 
     async function checkAllProducts() {
