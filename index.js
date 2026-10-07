@@ -45,7 +45,9 @@ app.use(express.static(path.join(__dirname, 'public')));
    MongoDB
 ========================= */
 
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+const MONGO_URI =
+    process.env.MONGO_URI ||
+    process.env.MONGODB_URI;
 
 if (!MONGO_URI) {
     console.error('❌ MONGO_URI is missing');
@@ -56,7 +58,10 @@ if (!MONGO_URI) {
             console.log('✅ MongoDB connected');
         })
         .catch((error) => {
-            console.error('❌ MongoDB connection error:', error.message);
+            console.error(
+                '❌ MongoDB connection error:',
+                error.message
+            );
         });
 }
 
@@ -91,7 +96,7 @@ const storeSchema = new mongoose.Schema(
         customMessage: {
             type: String,
             default:
-                'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
+                'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
         }
     },
     {
@@ -102,25 +107,20 @@ const storeSchema = new mongoose.Schema(
 const Store = mongoose.model('Store', storeSchema);
 
 /* =========================
-   Health Check
+   Health
 ========================= */
 
 app.get('/health', async (req, res) => {
-    try {
-        const mongoConnected =
-            mongoose.connection.readyState === 1;
+    const mongoConnected =
+        mongoose.connection.readyState === 1;
 
-        res.json({
-            success: true,
-            service: 'salla-whatsapp-notify',
-            mongodb: mongoConnected ? 'connected' : 'disconnected'
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
+    res.json({
+        success: true,
+        service: 'salla-whatsapp-notify',
+        mongodb: mongoConnected
+            ? 'connected'
+            : 'disconnected'
+    });
 });
 
 /* =========================
@@ -137,7 +137,11 @@ app.get('/', (req, res) => {
 
 app.get('/dashboard', (req, res) => {
     res.sendFile(
-        path.join(__dirname, 'public', 'dashboard.html')
+        path.join(
+            __dirname,
+            'public',
+            'dashboard.html'
+        )
     );
 });
 
@@ -150,65 +154,130 @@ app.get('/auth/callback', async (req, res) => {
         const code = req.query.code;
 
         if (!code) {
-            return res.status(400).send('Missing OAuth code');
+            console.error(
+                '❌ OAuth callback: missing code'
+            );
+
+            return res.status(400).send(
+                'Missing OAuth code'
+            );
         }
 
-        const clientId = process.env.SALLA_CLIENT_ID;
-        const clientSecret = process.env.SALLA_CLIENT_SECRET;
+        const clientId =
+            process.env.SALLA_CLIENT_ID;
+
+        const clientSecret =
+            process.env.SALLA_CLIENT_SECRET;
+
+        /*
+         * مهم:
+         * لازم يكون نفس الـ Redirect URI
+         * المسجل في إعدادات تطبيق سلة.
+         */
+        const redirectUri =
+            process.env.SALLA_REDIRECT_URI ||
+            `${req.protocol}://${req.get('host')}/auth/callback`;
 
         if (!clientId || !clientSecret) {
-            console.error('❌ Salla OAuth credentials are missing');
+            console.error(
+                '❌ Salla OAuth credentials are missing'
+            );
 
             return res.status(500).send(
                 'Salla OAuth configuration is missing'
             );
         }
 
-        /* Exchange code for tokens */
+        console.log(
+            '🔐 Starting Salla OAuth token exchange...'
+        );
+
+        /* =========================
+           Exchange code for token
+        ========================= */
 
         const tokenResponse = await axios.post(
             'https://accounts.salla.sa/oauth2/token',
-            {
+            new URLSearchParams({
                 grant_type: 'authorization_code',
                 client_id: clientId,
                 client_secret: clientSecret,
-                code: code
-            },
+                code: code,
+                redirect_uri: redirectUri
+            }).toString(),
             {
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type':
+                        'application/x-www-form-urlencoded'
                 }
             }
         );
 
         const accessToken =
-            tokenResponse.data.access_token;
+            tokenResponse.data?.access_token;
 
         const refreshToken =
-            tokenResponse.data.refresh_token || '';
+            tokenResponse.data?.refresh_token || '';
 
-        /* Get merchant information */
+        if (!accessToken) {
+            console.error(
+                '❌ Salla did not return an access token'
+            );
+
+            return res.status(500).send(
+                'Salla did not return an access token'
+            );
+        }
+
+        console.log(
+            '✅ Salla access token received'
+        );
+
+        /* =========================
+           Get Salla User Info
+        ========================= */
 
         const userResponse = await axios.get(
-            'https://api.salla.dev/admin/v2/user',
+            'https://accounts.salla.sa/oauth2/user/info',
             {
                 headers: {
-                    Authorization: `Bearer ${accessToken}`
+                    Authorization:
+                        `Bearer ${accessToken}`
                 }
             }
         );
 
-        const userData = userResponse.data?.data || {};
+        const userData =
+            userResponse.data?.data ||
+            userResponse.data ||
+            {};
 
+        console.log(
+            '✅ Salla user information received'
+        );
+
+        /*
+         * Salla User Info may contain the merchant/store
+         * identifier in different structures.
+         */
         const merchantId =
             userData.merchant?.id ||
             userData.store?.id ||
+            userData.merchant_id ||
+            userData.store_id ||
             userData.id;
 
         if (!merchantId) {
             console.error(
-                '❌ Could not determine merchant ID',
-                userData
+                '❌ Merchant ID was not found in Salla user info'
+            );
+
+            console.error(
+                JSON.stringify(
+                    userData,
+                    null,
+                    2
+                )
             );
 
             return res.status(500).send(
@@ -216,14 +285,21 @@ app.get('/auth/callback', async (req, res) => {
             );
         }
 
-        /* Save store */
+        const merchantIdString =
+            String(merchantId);
+
+        /* =========================
+           Save Store
+        ========================= */
 
         await Store.findOneAndUpdate(
-            { merchantId: String(merchantId) },
             {
-                merchantId: String(merchantId),
-                accessToken,
-                refreshToken
+                merchantId: merchantIdString
+            },
+            {
+                merchantId: merchantIdString,
+                accessToken: accessToken,
+                refreshToken: refreshToken
             },
             {
                 upsert: true,
@@ -233,14 +309,27 @@ app.get('/auth/callback', async (req, res) => {
         );
 
         console.log(
-            `✅ Salla store connected: ${merchantId}`
+            `✅ Store saved: ${merchantIdString}`
         );
 
-        res.redirect('/dashboard');
+        /* =========================
+           Open Dashboard with Merchant ID
+        ========================= */
+
+        res.redirect(
+            `/dashboard?merchant_id=${encodeURIComponent(
+                merchantIdString
+            )}`
+        );
 
     } catch (error) {
         console.error(
-            '❌ OAuth error:',
+            '❌ OAuth error status:',
+            error.response?.status
+        );
+
+        console.error(
+            '❌ OAuth error data:',
             error.response?.data || error.message
         );
 
@@ -256,18 +345,21 @@ app.get('/auth/callback', async (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
     try {
-        const merchantId = req.query.merchant_id;
+        const merchantId =
+            req.query.merchant_id;
 
         if (!merchantId) {
             return res.status(400).json({
                 success: false,
-                error: 'merchant_id is required'
+                error:
+                    'merchant_id is required'
             });
         }
 
-        const store = await Store.findOne({
-            merchantId: String(merchantId)
-        }).lean();
+        const store =
+            await Store.findOne({
+                merchantId: String(merchantId)
+            }).lean();
 
         if (!store) {
             return res.json({
@@ -275,17 +367,18 @@ app.get('/api/settings', async (req, res) => {
                 connected: false,
                 whatsappNumber: '',
                 customMessage:
-                    'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
+                    'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
             });
         }
 
         res.json({
             success: true,
             connected: true,
-            whatsappNumber: store.whatsappNumber || '',
+            whatsappNumber:
+                store.whatsappNumber || '',
             customMessage:
                 store.customMessage ||
-                'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
+                'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
         });
 
     } catch (error) {
@@ -296,7 +389,8 @@ app.get('/api/settings', async (req, res) => {
 
         res.status(500).json({
             success: false,
-            error: 'Failed to load settings'
+            error:
+                'Failed to load settings'
         });
     }
 });
@@ -316,28 +410,37 @@ app.post('/api/settings', async (req, res) => {
         if (!merchant_id) {
             return res.status(400).json({
                 success: false,
-                error: 'merchant_id is required'
+                error:
+                    'merchant_id is required'
             });
         }
 
-        const store = await Store.findOneAndUpdate(
-            {
-                merchantId: String(merchant_id)
-            },
-            {
-                merchantId: String(merchant_id),
-                whatsappNumber:
-                    whatsappNumber || '',
-                customMessage:
-                    customMessage ||
-                    'مرحباً، أريد معرفة موعد توفر هذا المنتج مرة أخرى.'
-            },
-            {
-                upsert: true,
-                new: true,
-                setDefaultsOnInsert: true
-            }
-        );
+        const store =
+            await Store.findOneAndUpdate(
+                {
+                    merchantId:
+                        String(merchant_id)
+                },
+                {
+                    merchantId:
+                        String(merchant_id),
+
+                    whatsappNumber:
+                        String(
+                            whatsappNumber || ''
+                        ).trim(),
+
+                    customMessage:
+                        String(
+                            customMessage || ''
+                        ).trim()
+                },
+                {
+                    upsert: true,
+                    new: true,
+                    setDefaultsOnInsert: true
+                }
+            );
 
         console.log(
             `✅ Settings saved for merchant: ${merchant_id}`
@@ -345,10 +448,13 @@ app.post('/api/settings', async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Settings saved successfully',
+            message:
+                'Settings saved successfully',
+
             settings: {
                 whatsappNumber:
                     store.whatsappNumber || '',
+
                 customMessage:
                     store.customMessage || ''
             }
@@ -362,7 +468,8 @@ app.post('/api/settings', async (req, res) => {
 
         res.status(500).json({
             success: false,
-            error: 'Failed to save settings'
+            error:
+                'Failed to save settings'
         });
     }
 });
@@ -379,7 +486,7 @@ app.use((req, res) => {
 });
 
 /* =========================
-   Start Server
+   Start
 ========================= */
 
 app.listen(PORT, () => {
