@@ -2,219 +2,115 @@
     'use strict';
 
     const API_BASE = 'https://salla-whatsapp-notify.onrender.com';
-    const DEFAULT_MESSAGE = 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
-
-    let merchantId = null;
-    let settings = null;
-    let settingsPromise = null;
-    let checkTimer = null;
-
-    function cleanText(value) {
-        return String(value || '').replace(/\s+/g, ' ').trim();
-    }
-
-    function getSallaConfig(key) {
-        try {
-            if (window.salla && window.salla.config && typeof window.salla.config.get === 'function') {
-                return window.salla.config.get(key);
-            }
-        } catch (e) {}
-        return null;
-    }
+    let merchantId = null, settings = null;
 
     function getMerchantId() {
         if (merchantId) return merchantId;
-        const possibleIds = [
-            getSallaConfig('store.id'),
-            getSallaConfig('store_id'),
-            getSallaConfig('merchant_id'),
-            getSallaConfig('merchant.id')
-        ];
-        for (const id of possibleIds) {
-            if (id) {
-                merchantId = String(id);
-                return merchantId;
-            }
+        if (window.salla?.config?.get) {
+            merchantId = window.salla.config.get('store.id') || window.salla.config.get('merchant_id');
         }
-        try {
-            const urlMerchantId = new URLSearchParams(window.location.search).get('merchant_id');
-            if (urlMerchantId) {
-                merchantId = String(urlMerchantId);
-                return merchantId;
-            }
-        } catch (e) {}
-        return null;
+        return merchantId || new URLSearchParams(window.location.search).get('merchant_id');
     }
 
     async function loadSettings() {
         if (settings) return settings;
-        if (settingsPromise) return settingsPromise;
-
         const id = getMerchantId();
         if (!id) return null;
-
-        settingsPromise = fetch(`${API_BASE}/api/settings?merchant_id=${encodeURIComponent(id)}`, {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' },
-            cache: 'no-store'
-        })
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data && data.success) {
-                    settings = {
-                        whatsappNumber: cleanText(data.whatsappNumber).replace(/\D/g, ''),
-                        customMessage: cleanText(data.customMessage) || DEFAULT_MESSAGE
-                    };
-                    return settings;
-                }
-                return null;
-            })
-            .catch(() => {
-                settingsPromise = null;
-                return null;
-            });
-
-        return settingsPromise;
+        try {
+            const res = await fetch(`${API_BASE}/api/settings?merchant_id=${encodeURIComponent(id)}`);
+            const data = await res.json();
+            if (data?.success) {
+                settings = {
+                    number: String(data.whatsappNumber || '').replace(/\D/g, ''),
+                    msg: data.customMessage || 'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+                };
+                return settings;
+            }
+        } catch (e) {}
+        return null;
     }
 
-    /* =========================================================
-       إصلاح كشف بطاقات المنتجات للرئيسية والصفحات الأخرى
-    ========================================================= */
-
-    function getProductContainers() {
-        const selectors = [
-            'salla-product-card',
-            '.product-entry',
-            '.product-card',
-            '.product-item',
-            '[data-product-id]'
-        ];
-
-        const elements = Array.from(document.querySelectorAll(selectors.join(',')));
-        
-        // تصفية ذكية بدون استبعاد بطاقات الصفحة الرئيسية
-        return elements.filter(el => {
-            // تجاهل الحاويات الكبيرة جداً كـ body أو الأقسام الرئيسية
-            if (el.tagName === 'BODY' || el.classList.contains('products-grid')) return false;
-            return true;
-        });
-    }
-
-    function isOutOfStock(container) {
-        if (!container) return false;
-        
-        const text = (container.innerText || container.textContent || '').toLowerCase();
-        const keywords = ['نفدت الكمية', 'نفد المخزون', 'نفدت', 'غير متوفر', 'sold out', 'out of stock'];
-        
-        const hasText = keywords.some(kw => text.includes(kw));
-        const hasAttr = container.hasAttribute('out-of-stock') || 
-                        ['out', 'sold-out', 'out-of-stock'].includes(container.getAttribute('product-status'));
-
-        return hasText || hasAttr;
-    }
-
-    function extractProductDetails(container) {
-        const p = container.product || {};
-
-        // 1. العنوان
-        let name = p.name || '';
-        if (!name) {
-            const nameEl = container.querySelector('.product-title, [class*="title"], h2, h3, a[href*="/p/"]');
-            if (nameEl) name = cleanText(nameEl.textContent);
-        }
-
-        // 2. السعر
-        let price = p.price?.amount || p.price || '';
-        if (!price || typeof price === 'object') {
-            const priceEl = container.querySelector('.product-price, [class*="price"], .price');
-            if (priceEl) price = cleanText(priceEl.textContent);
-        }
-
-        // 3. الرابط (دقيق جداً للرئيسية)
-        let url = p.url || '';
-        if (!url) {
-            const linkEl = container.querySelector('a[href*="/p/"], a[href*="/product/"]');
-            if (linkEl) url = linkEl.href;
-        }
-
-        return {
-            name: name || 'منتج',
-            price: typeof price === 'number' ? `${price}` : price,
-            url: url || window.location.href
-        };
-    }
-
-    /* =========================================================
-       إنشاء وحقن الزر
-    ========================================================= */
-
-    async function processEverything() {
+    async function run() {
         const st = await loadSettings();
-        if (!st || !st.whatsappNumber) return;
+        if (!st || !st.number) return;
 
-        const containers = getProductContainers();
+        // تحديد كل أشكال البطاقات في الرئيسية وكافة الصفحات
+        const cards = document.querySelectorAll('salla-product-card, .product-entry, .product-card, .product-item, [data-product-id]');
 
-        containers.forEach(container => {
-            const out = isOutOfStock(container);
-            const existingBtn = container.querySelector('.salla-wa-notify-btn-fix');
+        cards.forEach(card => {
+            const text = (card.innerText || card.textContent || '').toLowerCase();
+            const isOut = card.hasAttribute('out-of-stock') || 
+                          ['out', 'sold-out', 'out-of-stock'].includes(card.getAttribute('product-status')) ||
+                          text.includes('نفدت الكمية') || text.includes('نفد المخزون') || text.includes('غير متوفر');
 
-            if (!out) {
-                if (existingBtn) existingBtn.remove();
+            const existing = card.querySelector('.salla-wa-notify-clean-btn');
+
+            if (!isOut) {
+                if (existing) existing.remove();
                 return;
             }
 
-            if (existingBtn) return;
+            if (existing) return;
 
-            const details = extractProductDetails(container);
+            // 1. استخراج رابط المنتج الصحيح من الكارت
+            const linkEl = card.querySelector('a[href*="/p/"], a[href*="/product/"]') || card.querySelector('a[href]');
+            const productUrl = linkEl ? linkEl.href : window.location.href;
 
-            let msg = `${st.customMessage}\n\nالمنتج: ${details.name}`;
-            if (details.price) msg += `\nالسعر: ${details.price}`;
-            msg += `\nالرابط: ${details.url}`;
+            // 2. استخراج الاسم الصحيح
+            const nameEl = card.querySelector('.product-title, [class*="title"], h2, h3, h4');
+            const productName = nameEl ? nameEl.textContent.trim().replace(/\s+/g, ' ') : 'منتج';
 
-            const waUrl = `https://wa.me/${st.whatsappNumber}?text=${encodeURIComponent(msg)}`;
+            // 3. استخراج السعر الصحيح
+            const priceEl = card.querySelector('.product-price, [class*="price"], .price');
+            const productPrice = priceEl ? priceEl.textContent.trim().replace(/\s+/g, ' ') : '';
+
+            // صياغة الرسالة
+            let msg = `${st.msg}\n\nالمنتج: ${productName}`;
+            if (productPrice) msg += `\nالسعر: ${productPrice}`;
+            msg += `\nالرابط: ${productUrl}`;
 
             const btn = document.createElement('a');
-            btn.className = 'salla-wa-notify-btn-fix';
-            btn.href = waUrl;
+            btn.className = 'salla-wa-notify-clean-btn';
+            btn.href = `https://wa.me/${st.number}?text=${encodeURIComponent(msg)}`;
             btn.target = '_blank';
             btn.rel = 'noopener noreferrer';
-            btn.textContent = '🔔 أبلغني عند التوفر';
+            btn.innerHTML = '💬 أبلغني عند التوفر';
 
+            // تصميم وتنسيق الزر بشكل أنيق وعصري
             btn.style.cssText = `
-                display: block !important;
-                width: calc(100% - 12px) !important;
-                margin: 8px auto !important;
-                padding: 9px 12px !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 6px !important;
+                width: calc(100% - 16px) !important;
+                margin: 8px auto 6px auto !important;
+                padding: 8px 12px !important;
                 background-color: #25D366 !important;
                 color: #ffffff !important;
                 border-radius: 8px !important;
                 text-align: center !important;
                 text-decoration: none !important;
-                font-size: 12px !important;
-                font-weight: 700 !important;
-                line-height: 1.3 !important;
+                font-size: 13px !important;
+                font-weight: 600 !important;
                 box-sizing: border-box !important;
+                transition: transform 0.2s, background-color 0.2s !important;
                 clear: both !important;
                 position: relative !important;
                 z-index: 10 !important;
             `;
 
-            // التركيب المباشر المضمون
-            container.appendChild(btn);
+            card.appendChild(btn);
         });
     }
 
-    function scheduleCheck() {
-        clearTimeout(checkTimer);
-        checkTimer = setTimeout(processEverything, 300);
-    }
-
+    let timer = null;
     function init() {
-        processEverything();
-
+        run();
         if (document.body) {
-            const observer = new MutationObserver(scheduleCheck);
-            observer.observe(document.body, { childList: true, subtree: true });
+            new MutationObserver(() => {
+                clearTimeout(timer);
+                timer = setTimeout(run, 250);
+            }).observe(document.body, { childList: true, subtree: true });
         }
     }
 
