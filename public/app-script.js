@@ -77,66 +77,61 @@
     }
 
     /* =========================
-       Data Extraction Fixes
+       Smart Card Parser
     ========================= */
 
-    function extractCardProductData(card) {
-        // 1. محاولة القراءة المباشرة من كائن سلة الأصلي للمنتج
-        let raw = card.product || card.__product || null;
+    function parseCard(card) {
+        // 1. جلب كائن سلة الأصلي إن وجد
+        const raw = card.product || card.__product || {};
 
-        // 2. إذا لم يجد كائن جاهز، يقرأ بيانات البطاقة من الـ DOM الداخلي بكل دقّة
-        let id = raw?.id || card.getAttribute('data-id') || card.getAttribute('product-id');
-        
-        // استخراج اسم المنتج (تجنب اسم الصفحة بالكامل)
-        let name = raw?.name || raw?.title || '';
+        // 2. البحث عن زر الشراء أو "نفدت الكمية" داخل الكارت
+        const actionBtn = card.querySelector('salla-add-product-button, button, [class*="add-to-cart"], [class*="out-of-stock"]');
+
+        // 3. التحقق المباشر من حالة التوفر
+        let isOutOfStock = false;
+
+        if (raw.is_available === false || raw.isAvailable === false) {
+            isOutOfStock = true;
+        }
+
+        const cardText = (card.textContent || '').toLowerCase();
+        if (
+            cardText.includes('نفدت الكمية') ||
+            cardText.includes('نفد المخزون') ||
+            cardText.includes('غير متوفر') ||
+            cardText.includes('sold out') ||
+            cardText.includes('out of stock')
+        ) {
+            isOutOfStock = true;
+        }
+
+        // 4. استخراج اسم المنتج وسعره ورابطه بأسلوب آمن
+        let name = raw.name || raw.title || '';
         if (!name) {
-            const nameEl = card.querySelector('.product-title, .product-name, [class*="title"], h2, h3, a[href*="/p/"]');
+            const nameEl = card.querySelector('.product-title, [class*="title"], h2, h3, a[href*="/p/"]');
             if (nameEl) name = nameEl.textContent.trim();
         }
 
-        // استخراج رابط المنتج المباشر
-        let url = raw?.url || raw?.link || '';
+        let url = raw.url || raw.link || '';
         if (!url) {
             const linkEl = card.querySelector('a[href*="/p/"], a[href*="/product/"]');
             if (linkEl) url = linkEl.href;
         }
 
-        // استخراج السعر المباشر
-        let price = raw?.price?.amount || raw?.price || raw?.sale_price || '';
+        let price = raw.price?.amount || raw.price || '';
         if (!price || typeof price === 'object') {
             const priceEl = card.querySelector('.product-price, [class*="price"], .price');
             if (priceEl) price = priceEl.textContent.trim().replace(/\s+/g, ' ');
         }
 
-        // تحديد ما إذا كان المنتج غير متوفر
-        let isOutOfStock = false;
-        if (raw) {
-            isOutOfStock = raw.is_available === false || raw.isAvailable === false || 
-                           ['out', 'out-of-stock', 'out_of_stock', 'sold-out'].includes(String(raw.status || raw.product_status).toLowerCase());
-        }
-
-        if (!isOutOfStock) {
-            const statusAttr = card.getAttribute('product-status') || card.getAttribute('status') || '';
-            const textContent = card.textContent || '';
-            isOutOfStock = ['out', 'out-of-stock', 'out_of_stock', 'sold-out'].includes(statusAttr.toLowerCase()) ||
-                           card.hasAttribute('out-of-stock') ||
-                           textContent.includes('نفدت الكمية') || 
-                           textContent.includes('غير متوفر') || 
-                           textContent.includes('نفد المخزون');
-        }
-
         return {
-            id,
             name: name.trim() || 'منتج',
             url: url || window.location.href,
             price: typeof price === 'number' ? `${price}` : price,
-            isOutOfStock
+            isOutOfStock,
+            actionBtn
         };
     }
-
-    /* =========================
-       WhatsApp Link Builder
-    ========================= */
 
     function buildWhatsAppUrl(product) {
         if (!settings || !settings.whatsappNumber) return null;
@@ -152,28 +147,28 @@
     }
 
     /* =========================
-       Render Logic (Cards)
+       Process Cards
     ========================= */
 
     async function processProductCards() {
-        const cards = document.querySelectorAll('salla-product-card');
+        const cards = document.querySelectorAll('salla-product-card, .product-entry, .product-card');
         if (!cards.length) return;
 
         const loadedSettings = await loadSettings();
         if (!loadedSettings) return;
 
         cards.forEach((card) => {
-            const data = extractCardProductData(card);
+            const info = parseCard(card);
             const existingBtn = card.querySelector(`.${CARD_BUTTON_CLASS}`);
 
-            if (!data.isOutOfStock) {
+            if (!info.isOutOfStock) {
                 if (existingBtn) existingBtn.remove();
                 return;
             }
 
             if (existingBtn) return;
 
-            const waUrl = buildWhatsAppUrl(data);
+            const waUrl = buildWhatsAppUrl(info);
             if (!waUrl) return;
 
             const btn = document.createElement('a');
@@ -183,32 +178,30 @@
             btn.rel = 'noopener noreferrer';
             btn.textContent = '🔔 أبلغني عند التوفر';
 
-            // تنسيق مرن لحل مشكلة الظهور الجزئي أو انكماش الزر
+            // تنسيق يمنع ظهور الزر بشكل عمودي ويفرضه كـ Block بعرض كامل
             btn.style.cssText = `
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                width: calc(100% - 16px) !important;
-                margin: 8px auto !important;
+                display: block !important;
+                width: 100% !important;
+                margin-top: 8px !important;
+                margin-bottom: 4px !important;
                 padding: 8px 10px !important;
                 background: #25D366 !important;
                 color: #ffffff !important;
-                border-radius: 8px !important;
+                border-radius: 6px !important;
                 text-align: center !important;
                 text-decoration: none !important;
                 font-size: 12px !important;
                 font-weight: 700 !important;
-                line-height: 1.2 !important;
+                line-height: 1.3 !important;
                 box-sizing: border-box !important;
-                cursor: pointer !important;
-                z-index: 10 !important;
                 clear: both !important;
+                position: relative !important;
+                z-index: 5 !important;
             `;
 
-            // إدراج الزر في أنسب مكان داخل هيكل الكارت لمنع قصه
-            const footer = card.querySelector('.product-card__footer, .product-card__content, .product-card__body');
-            if (footer) {
-                footer.appendChild(btn);
+            // التركيب: إدراج الزر بعد زر الشراء/نفدت الكمية مباشرة لتفادي مشاكل Flexbox
+            if (info.actionBtn && info.actionBtn.parentNode) {
+                info.actionBtn.insertAdjacentElement('afterend', btn);
             } else {
                 card.appendChild(btn);
             }
@@ -216,7 +209,7 @@
     }
 
     /* =========================
-       Render Logic (Product Page)
+       Process Product Page
     ========================= */
 
     async function processProductPage() {
@@ -225,7 +218,6 @@
 
         const existing = document.getElementById(BUTTON_ID);
 
-        // فحص حالة التوفر لصفحة المنتج
         const status = mainButton.getAttribute('product-status') || mainButton.getAttribute('status') || '';
         const text = mainButton.textContent || '';
         const isOutOfStock = ['out', 'out-of-stock', 'out_of_stock', 'sold-out'].includes(status.toLowerCase()) ||
@@ -277,10 +269,6 @@
         mainButton.insertAdjacentElement('afterend', btn);
     }
 
-    /* =========================
-       Execution & Observers
-    ========================= */
-
     function runAllChecks() {
         processProductPage();
         processProductCards();
@@ -289,7 +277,7 @@
     let timer = null;
     function debounceCheck() {
         clearTimeout(timer);
-        timer = setTimeout(runAllChecks, 250);
+        timer = setTimeout(runAllChecks, 300);
     }
 
     const observer = new MutationObserver(debounceCheck);
