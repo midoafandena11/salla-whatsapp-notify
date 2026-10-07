@@ -1,22 +1,22 @@
 (function () {
     'use strict';
 
-    const API_BASE = 'https://salla-whatsapp-notify.onrender.com';
+    const API_BASE =
+        'https://salla-whatsapp-notify.onrender.com';
 
-    const BUTTON_ID = 'salla-whatsapp-notify-button';
-    const CARD_BUTTON_CLASS = 'salla-whatsapp-notify-card-button';
-    const STYLE_ID = 'salla-whatsapp-notify-style';
+    const BUTTON_ID =
+        'salla-whatsapp-notify-button';
 
-    const BUTTON_TEXT = '🔔 أبلغني عبر واتساب عند توفر المنتج';
+    const CARD_BUTTON_CLASS =
+        'salla-whatsapp-notify-card-button';
+
+    const BUTTON_TEXT =
+        '🔔 أبلغني عبر واتساب عند توفر المنتج';
 
     let merchantId = null;
     let settings = null;
     let settingsPromise = null;
-    let productButtonBusy = false;
-
-    /* =========================
-       Salla
-    ========================= */
+    let productButtonCreating = false;
 
     function getSallaConfig(key) {
         try {
@@ -35,20 +35,15 @@
     function getMerchantId() {
         if (merchantId) return merchantId;
 
-        const id =
+        merchantId =
             getSallaConfig('store.id') ||
             getSallaConfig('store_id') ||
             getSallaConfig('merchant_id') ||
-            getSallaConfig('merchantId');
-
-        if (id) merchantId = String(id);
+            getSallaConfig('merchantId') ||
+            null;
 
         return merchantId;
     }
-
-    /* =========================
-       Settings
-    ========================= */
 
     async function loadSettings() {
         if (settings) return settings;
@@ -59,15 +54,14 @@
         if (!id) return null;
 
         settingsPromise = fetch(
-            `${API_BASE}/api/settings?merchant_id=${encodeURIComponent(id)}`,
-            {
-                method: 'GET',
-                credentials: 'omit'
-            }
+            `${API_BASE}/api/settings?merchant_id=${encodeURIComponent(id)}`
         )
-            .then(response => {
-                if (!response.ok) throw new Error('settings request failed');
-                return response.json();
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error('settings failed');
+                }
+
+                return res.json();
             })
             .then(data => {
                 settings = data?.settings || data || {};
@@ -78,22 +72,20 @@
         return settingsPromise;
     }
 
-    function getWhatsAppNumber(data) {
+    function getWhatsAppNumber() {
         return String(
-            data?.whatsapp_number ||
-            data?.phone ||
-            data?.whatsapp ||
-            data?.number ||
+            settings?.whatsapp_number ||
+            settings?.phone ||
+            settings?.whatsapp ||
+            settings?.number ||
             ''
-        ).replace(/[^\d]/g, '');
+        ).replace(/\D/g, '');
     }
 
-    /* =========================
-       Product Data
-    ========================= */
-
     function getValue(value) {
-        if (value === null || value === undefined) return null;
+        if (value === null || value === undefined) {
+            return null;
+        }
 
         if (typeof value === 'object') {
             return value.amount ?? value.value ?? null;
@@ -102,7 +94,15 @@
         return value;
     }
 
-    function getProductName(product, root) {
+    function getCardProduct(card) {
+        try {
+            return card.product || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function getCardName(card, product) {
         const name =
             product?.name ||
             product?.title ||
@@ -112,52 +112,48 @@
             return String(name).trim();
         }
 
-        if (root) {
-            const element =
-                root.querySelector('[class*="product-name"]') ||
-                root.querySelector('[class*="product-title"]') ||
-                root.querySelector('h2') ||
-                root.querySelector('h3');
+        const element =
+            card.querySelector('[class*="product-name"]') ||
+            card.querySelector('[class*="product-title"]') ||
+            card.querySelector('h2') ||
+            card.querySelector('h3');
 
-            const text = element?.textContent?.trim();
-
-            if (text) return text;
-        }
-
-        return '';
+        return element?.textContent?.trim() || '';
     }
 
-    function getProductUrl(product, root) {
-        const directUrl =
+    function getCardUrl(card, product) {
+        const url =
             product?.url ||
             product?.link ||
             product?.product_url;
 
-        if (directUrl) return String(directUrl);
+        if (url) return String(url);
 
-        if (root) {
-            const link =
-                root.querySelector('a[href*="/products/"]') ||
-                root.querySelector('a[href]');
+        const link =
+            card.querySelector('a[href*="/products/"]') ||
+            card.querySelector('a[href]');
 
-            if (link?.href) return link.href;
-        }
-
-        return window.location.href;
+        return link?.href || '';
     }
 
     function normalizeProduct(rawProduct, root) {
         if (!rawProduct) return null;
 
-        const price = getValue(
-            rawProduct.sale_price ?? rawProduct.price
-        );
+        const salePrice =
+            getValue(rawProduct.sale_price);
 
-        const regularPrice = getValue(
-            rawProduct.regular_price ??
-            rawProduct.compare_price ??
-            rawProduct.old_price
-        );
+        const price =
+            getValue(rawProduct.price);
+
+        const regularPrice =
+            getValue(
+                rawProduct.regular_price ??
+                rawProduct.compare_price ??
+                rawProduct.old_price
+            );
+
+        const isCard =
+            root?.tagName === 'SALLA-PRODUCT-CARD';
 
         return {
             id:
@@ -168,15 +164,27 @@
                 root?.getAttribute('product-id') ??
                 null,
 
-            name: getProductName(rawProduct, root),
+            name: isCard
+                ? getCardName(root, rawProduct)
+                : String(
+                    rawProduct.name ||
+                    rawProduct.title ||
+                    rawProduct.product_name ||
+                    ''
+                ).trim(),
 
-            url: getProductUrl(rawProduct, root),
+            url: isCard
+                ? getCardUrl(root, rawProduct)
+                : (
+                    rawProduct.url ||
+                    rawProduct.link ||
+                    rawProduct.product_url ||
+                    window.location.href
+                ),
 
             price,
-
+            salePrice,
             regularPrice,
-
-            salePrice: getValue(rawProduct.sale_price),
 
             isAvailable:
                 rawProduct.is_available ??
@@ -190,10 +198,6 @@
         };
     }
 
-    /* =========================
-       Stock
-    ========================= */
-
     function isProductOutOfStock(product, root) {
         if (!product) return false;
 
@@ -201,7 +205,8 @@
             return true;
         }
 
-        const status = String(product.status || '').toLowerCase();
+        const status =
+            String(product.status || '').toLowerCase();
 
         if (
             status === 'out_of_stock' ||
@@ -229,32 +234,24 @@
                 '[data-product-status], [data-status]'
             );
 
-        const statusText = String(
-            statusElement?.textContent || ''
-        ).toLowerCase();
+        const text =
+            statusElement?.textContent?.toLowerCase() || '';
 
-        if (
-            statusText.includes('نفدت الكمية') ||
-            statusText.includes('نفد المخزون') ||
-            statusText.includes('غير متوفر') ||
-            statusText.includes('sold out') ||
-            statusText.includes('out of stock') ||
-            statusText.includes('unavailable')
-        ) {
-            return true;
-        }
-
-        return false;
+        return (
+            text.includes('نفدت الكمية') ||
+            text.includes('نفد المخزون') ||
+            text.includes('غير متوفر') ||
+            text.includes('sold out') ||
+            text.includes('out of stock') ||
+            text.includes('unavailable')
+        );
     }
-
-    /* =========================
-       Price
-    ========================= */
-
-    function formatNumber(value) {
+        function formatNumber(value) {
         const number = Number(value);
 
-        if (!Number.isFinite(number)) return '';
+        if (!Number.isFinite(number)) {
+            return '';
+        }
 
         return new Intl.NumberFormat('ar-SA', {
             maximumFractionDigits: 2
@@ -263,49 +260,52 @@
 
     function getPriceText(product) {
         const price = Number(product.price);
-        const regular = Number(product.regularPrice);
         const sale = Number(product.salePrice);
+        const regular = Number(product.regularPrice);
 
-        const hasSale =
+        if (
             Number.isFinite(sale) &&
             sale > 0 &&
             Number.isFinite(regular) &&
-            regular > sale;
-
-        if (hasSale) {
-            return (
-                `السعر الأصلي: ${formatNumber(regular)}\n` +
+            regular > sale
+        ) {
+            return [
+                `السعر الأصلي: ${formatNumber(regular)}`,
                 `السعر بعد الخصم: ${formatNumber(sale)}`
-            );
+            ].join('\n');
         }
 
-        if (Number.isFinite(price) && price > 0) {
+        if (
+            Number.isFinite(price) &&
+            price > 0
+        ) {
             return `السعر: ${formatNumber(price)}`;
         }
 
-        if (Number.isFinite(sale) && sale > 0) {
+        if (
+            Number.isFinite(sale) &&
+            sale > 0
+        ) {
             return `السعر: ${formatNumber(sale)}`;
         }
 
         return '';
     }
-        /* =========================
-       WhatsApp
-    ========================= */
 
     function createWhatsAppUrl(product) {
-        const number = getWhatsAppNumber(settings);
+        const number = getWhatsAppNumber();
 
         if (!number || !product?.name) {
             return null;
         }
 
-        const customMessage = String(
-            settings?.message ||
-            settings?.custom_message ||
-            settings?.whatsapp_message ||
-            'أرغب في معرفة موعد توفر هذا المنتج.'
-        ).trim();
+        const customMessage =
+            String(
+                settings?.message ||
+                settings?.custom_message ||
+                settings?.whatsapp_message ||
+                'أرغب في معرفة موعد توفر هذا المنتج.'
+            ).trim();
 
         const priceText = getPriceText(product);
 
@@ -314,96 +314,20 @@
             '',
             `المنتج: ${product.name}`,
             priceText,
-            `الرابط: ${product.url}`
+            product.url
+                ? `الرابط: ${product.url}`
+                : ''
         ]
             .filter(Boolean)
             .join('\n');
 
-        return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+        return (
+            `https://wa.me/${number}` +
+            `?text=${encodeURIComponent(message)}`
+        );
     }
 
-    /* =========================
-       Styles
-    ========================= */
-
-    function injectStyles() {
-        if (document.getElementById(STYLE_ID)) return;
-
-        const style = document.createElement('style');
-        style.id = STYLE_ID;
-
-        style.textContent = `
-            #${BUTTON_ID} {
-                display: flex;
-                width: 100%;
-                min-height: 46px;
-                align-items: center;
-                justify-content: center;
-                box-sizing: border-box;
-                margin-top: 10px;
-                padding: 11px 14px;
-                border-radius: 8px;
-                background: #25D366;
-                color: #fff !important;
-                text-decoration: none !important;
-                text-align: center;
-                font-size: 14px;
-                font-weight: 700;
-                line-height: 1.2;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                cursor: pointer;
-            }
-
-            #${BUTTON_ID}:hover {
-                opacity: .92;
-            }
-
-            .${CARD_BUTTON_CLASS}-wrap {
-                display: block;
-                width: 100%;
-                flex: 0 0 100%;
-                box-sizing: border-box;
-                clear: both;
-                margin-top: 8px;
-            }
-
-            .${CARD_BUTTON_CLASS} {
-                display: flex;
-                width: 100%;
-                min-height: 38px;
-                align-items: center;
-                justify-content: center;
-                box-sizing: border-box;
-                padding: 8px 7px;
-                border-radius: 8px;
-                background: #25D366;
-                color: #fff !important;
-                text-decoration: none !important;
-                text-align: center;
-                font-size: 12px;
-                font-weight: 700;
-                line-height: 1.2;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                cursor: pointer;
-            }
-
-            .${CARD_BUTTON_CLASS}:hover {
-                opacity: .92;
-            }
-        `;
-
-        document.head.appendChild(style);
-    }
-
-    /* =========================
-       Product Page Data
-    ========================= */
-
-    function getProductPageData() {
+    function getProductPageProduct() {
         let product = null;
 
         try {
@@ -415,19 +339,19 @@
         }
 
         if (!product) {
-            const button = document.querySelector(
-                'salla-add-product-button'
-            );
+            const button =
+                document.querySelector(
+                    'salla-add-product-button'
+                );
 
             product = button?.product || null;
         }
 
-        return normalizeProduct(product, document);
+        return normalizeProduct(
+            product,
+            document
+        );
     }
-
-    /* =========================
-       Create Buttons
-    ========================= */
 
     function createProductButton(product) {
         const url = createWhatsAppUrl(product);
@@ -440,65 +364,75 @@
         button.href = url;
         button.target = '_blank';
         button.rel = 'noopener noreferrer';
+
         button.textContent = BUTTON_TEXT;
+
+        Object.assign(button.style, {
+            display: 'flex',
+            width: '100%',
+            minHeight: '46px',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxSizing: 'border-box',
+            marginTop: '10px',
+            padding: '11px 14px',
+            background: '#25D366',
+            color: '#fff',
+            textDecoration: 'none',
+            textAlign: 'center',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '700',
+            lineHeight: '1.2',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            cursor: 'pointer'
+        });
 
         return button;
     }
 
-    function createCardButton(product) {
-        const url = createWhatsAppUrl(product);
-
-        if (!url) return null;
-
-        const wrapper = document.createElement('div');
-        wrapper.className = `${CARD_BUTTON_CLASS}-wrap`;
-
-        const button = document.createElement('a');
-
-        button.className = CARD_BUTTON_CLASS;
-        button.href = url;
-        button.target = '_blank';
-        button.rel = 'noopener noreferrer';
-        button.textContent = BUTTON_TEXT;
-
-        wrapper.appendChild(button);
-
-        return wrapper;
-    }
-
-    /* =========================
-       Product Page
-    ========================= */
-
     async function checkProductPage() {
-        const officialButton = document.querySelector(
-            'salla-add-product-button'
-        );
+        const officialButton =
+            document.querySelector(
+                'salla-add-product-button'
+            );
 
         if (!officialButton) return;
 
-        if (document.getElementById(BUTTON_ID)) return;
+        if (document.getElementById(BUTTON_ID)) {
+            return;
+        }
 
-        if (productButtonBusy) return;
+        if (productButtonCreating) return;
 
-        productButtonBusy = true;
+        productButtonCreating = true;
 
         try {
-            const product = getProductPageData();
+            const product = getProductPageProduct();
 
             if (!product) return;
 
-            if (!isProductOutOfStock(product, document)) {
+            if (
+                !isProductOutOfStock(
+                    product,
+                    document
+                )
+            ) {
                 return;
             }
 
-            const loadedSettings = await loadSettings();
+            await loadSettings();
 
-            if (!loadedSettings) return;
+            if (!settings) return;
 
-            if (document.getElementById(BUTTON_ID)) return;
+            if (document.getElementById(BUTTON_ID)) {
+                return;
+            }
 
-            const button = createProductButton(product);
+            const button =
+                createProductButton(product);
 
             if (!button) return;
 
@@ -507,12 +441,9 @@
                 button
             );
         } finally {
-            productButtonBusy = false;
+            productButtonCreating = false;
         }
     }
-        /* =========================
-       Product Cards
-    ========================= */
 
     function getCardTarget(card) {
         return (
@@ -523,97 +454,172 @@
         );
     }
 
-    function getCardProduct(card) {
-        try {
-            if (card.product) {
-                return normalizeProduct(card.product, card);
+    function createCardButton(product) {
+        const url = createWhatsAppUrl(product);
+
+        if (!url) return null;
+
+        const wrapper = document.createElement('div');
+
+        wrapper.className =
+            `${CARD_BUTTON_CLASS}-wrapper`;
+
+        Object.assign(wrapper.style, {
+            display: 'block',
+            width: '100%',
+            flex: '0 0 100%',
+            boxSizing: 'border-box',
+            clear: 'both',
+            marginTop: '8px'
+        });
+
+        const button = document.createElement('a');
+
+        button.className = CARD_BUTTON_CLASS;
+        button.href = url;
+        button.target = '_blank';
+        button.rel = 'noopener noreferrer';
+
+        button.textContent = BUTTON_TEXT;
+
+        Object.assign(button.style, {
+            display: 'flex',
+            width: '100%',
+            minHeight: '38px',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxSizing: 'border-box',
+            padding: '8px 7px',
+            background: '#25D366',
+            color: '#fff',
+            textDecoration: 'none',
+            textAlign: 'center',
+            borderRadius: '8px',
+            fontSize: '12px',
+            fontWeight: '700',
+            lineHeight: '1.2',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            cursor: 'pointer'
+        });
+
+        wrapper.appendChild(button);
+
+        return wrapper;
             }
-        } catch (_) {}
-
-        return null;
-    }
-
-    function cardHasButton(card) {
-        return !!card.querySelector(
-            `.${CARD_BUTTON_CLASS}-wrap`
-        );
-    }
-
-    async function checkProductCards() {
-        const cards = document.querySelectorAll(
-            'salla-product-card'
-        );
+        async function checkProductCards() {
+        const cards =
+            document.querySelectorAll(
+                'salla-product-card'
+            );
 
         if (!cards.length) return;
 
-        const loadedSettings = await loadSettings();
+        await loadSettings();
 
-        if (!loadedSettings) return;
+        if (!settings) return;
 
         cards.forEach(card => {
-            if (cardHasButton(card)) return;
+            if (
+                card.querySelector(
+                    `.${CARD_BUTTON_CLASS}`
+                )
+            ) {
+                return;
+            }
 
-            const product = getCardProduct(card);
+            const rawProduct =
+                getCardProduct(card);
+
+            if (!rawProduct) return;
+
+            const product =
+                normalizeProduct(
+                    rawProduct,
+                    card
+                );
 
             if (!product) return;
 
             if (!product.name) return;
 
-            if (!isProductOutOfStock(product, card)) {
+            if (
+                !isProductOutOfStock(
+                    product,
+                    card
+                )
+            ) {
                 return;
             }
 
-            const button = createCardButton(product);
+            const button =
+                createCardButton(product);
 
             if (!button) return;
 
-            const target = getCardTarget(card);
+            const target =
+                getCardTarget(card);
 
             target.appendChild(button);
         });
     }
 
-    /* =========================
-       Main
-    ========================= */
-
-    function checkAll() {
-        injectStyles();
-
+    function checkAllProducts() {
         checkProductPage();
         checkProductCards();
     }
 
-    /* =========================
-       Observer
-    ========================= */
-
     let observerTimer = null;
 
-    const observer = new MutationObserver(() => {
-        clearTimeout(observerTimer);
+    const observer =
+        new MutationObserver(() => {
+            clearTimeout(observerTimer);
 
-        observerTimer = setTimeout(() => {
-            checkAll();
-        }, 150);
-    });
-
-    function start() {
-        injectStyles();
-
-        checkAll();
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
+            observerTimer = setTimeout(
+                checkAllProducts,
+                200
+            );
         });
 
-        setTimeout(checkAll, 1000);
-        setTimeout(checkAll, 2500);
-        setTimeout(checkAll, 5000);
+    function start() {
+        checkAllProducts();
+
+        observer.observe(
+            document.body,
+            {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: [
+                    'disabled',
+                    'class',
+                    'data-status',
+                    'data-product-status',
+                    'data-out-of-stock'
+                ]
+            }
+        );
+
+        setTimeout(
+            checkAllProducts,
+            1000
+        );
+
+        setTimeout(
+            checkAllProducts,
+            2500
+        );
+
+        setTimeout(
+            checkAllProducts,
+            5000
+        );
     }
 
-    if (document.readyState === 'loading') {
+    if (
+        document.readyState === 'loading'
+    ) {
         document.addEventListener(
             'DOMContentLoaded',
             start,
