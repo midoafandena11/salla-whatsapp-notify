@@ -4,7 +4,7 @@
     const API_BASE =
         'https://salla-whatsapp-notify.onrender.com';
 
-    const BUTTON_ID =
+    const BUTTON_PREFIX =
         'salla-whatsapp-notify-button';
 
     let merchantId = null;
@@ -12,7 +12,7 @@
     let settingsPromise = null;
 
     /* =========================
-       Basic Helpers
+       Salla Helpers
     ========================= */
 
     function getSallaConfig(key) {
@@ -26,8 +26,7 @@
             }
         } catch (error) {
             console.warn(
-                'Salla config error:',
-                key,
+                'WhatsApp Notify: Salla config error',
                 error
             );
         }
@@ -40,37 +39,20 @@
             return merchantId;
         }
 
-        /*
-         * Main source:
-         * Salla storefront store ID
-         */
-        const storeId =
-            getSallaConfig('store.id');
-
-        if (storeId) {
-            merchantId = String(storeId);
-            return merchantId;
-        }
-
-        /*
-         * Fallbacks
-         */
-        const possibleIds = [
+        const ids = [
+            getSallaConfig('store.id'),
             getSallaConfig('store_id'),
             getSallaConfig('merchant_id'),
             getSallaConfig('merchant.id')
         ];
 
-        for (const id of possibleIds) {
-            if (id) {
+        for (const id of ids) {
+            if (id !== null && id !== undefined && id !== '') {
                 merchantId = String(id);
                 return merchantId;
             }
         }
 
-        /*
-         * URL fallback
-         */
         try {
             const params =
                 new URLSearchParams(
@@ -92,7 +74,7 @@
     }
 
     /* =========================
-       Load Settings
+       Settings
     ========================= */
 
     async function loadSettings() {
@@ -119,7 +101,7 @@
             {
                 method: 'GET',
                 headers: {
-                    'Accept': 'application/json'
+                    Accept: 'application/json'
                 }
             }
         )
@@ -146,9 +128,8 @@
                 settings = {
                     whatsappNumber:
                         String(
-                            data.whatsappNumber ||
-                            ''
-                        ).trim(),
+                            data.whatsappNumber || ''
+                        ).replace(/\D/g, ''),
 
                     customMessage:
                         String(
@@ -174,15 +155,352 @@
     }
 
     /* =========================
-       Product Information
+       Number Helpers
     ========================= */
 
-    function getProductName() {
-        const configTitle =
-            getSallaConfig('page.title');
+    function toNumber(value) {
+        if (
+            value === null ||
+            value === undefined ||
+            value === ''
+        ) {
+            return null;
+        }
 
-        if (configTitle) {
-            return String(configTitle).trim();
+        if (
+            typeof value === 'object' &&
+            value.amount !== undefined
+        ) {
+            return toNumber(value.amount);
+        }
+
+        const number =
+            Number(
+                String(value)
+                    .replace(/,/g, '')
+                    .trim()
+            );
+
+        if (
+            Number.isFinite(number) &&
+            number > 0
+        ) {
+            return number;
+        }
+
+        return null;
+    }
+
+    function formatNumber(value) {
+        const number =
+            toNumber(value);
+
+        if (number === null) {
+            return '';
+        }
+
+        return number.toLocaleString(
+            'ar-SA',
+            {
+                maximumFractionDigits: 2
+            }
+        );
+    }
+
+    /* =========================
+       Product Data
+    ========================= */
+
+    function parseProductData(value) {
+        if (!value) {
+            return null;
+        }
+
+        if (typeof value === 'object') {
+            return value;
+        }
+
+        if (typeof value === 'string') {
+            try {
+                return JSON.parse(value);
+            } catch (error) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    function getProductFromCard(card) {
+        if (!card) {
+            return null;
+        }
+
+        try {
+            if (card.product) {
+                const product =
+                    parseProductData(
+                        card.product
+                    );
+
+                if (product) {
+                    return product;
+                }
+            }
+        } catch (error) {}
+
+        try {
+            const attribute =
+                card.getAttribute(
+                    'product'
+                );
+
+            if (attribute) {
+                const product =
+                    parseProductData(
+                        attribute
+                    );
+
+                if (product) {
+                    return product;
+                }
+            }
+        } catch (error) {}
+
+        return null;
+    }
+
+    function getProductFromPage() {
+        /*
+         * Product page:
+         * Try the official Salla add-product component.
+         */
+        const button =
+            document.querySelector(
+                'salla-add-product-button'
+            );
+
+        if (button) {
+            const possibleValues = [
+                button.product,
+                button.productData
+            ];
+
+            for (
+                const value
+                of possibleValues
+            ) {
+                const product =
+                    parseProductData(value);
+
+                if (product) {
+                    return product;
+                }
+            }
+
+            try {
+                const productId =
+                    button.getAttribute(
+                        'product-id'
+                    );
+
+                if (productId) {
+                    const pageProduct =
+                        getSallaConfig(
+                            'page.product'
+                        );
+
+                    const product =
+                        parseProductData(
+                            pageProduct
+                        );
+
+                    if (product) {
+                        return product;
+                    }
+                }
+            } catch (error) {}
+        }
+
+        /*
+         * Other possible Salla config locations
+         */
+        const possibleProducts = [
+            getSallaConfig('page.product'),
+            getSallaConfig('product'),
+            getSallaConfig('page.data.product')
+        ];
+
+        for (
+            const value
+            of possibleProducts
+        ) {
+            const product =
+                parseProductData(value);
+
+            if (product) {
+                return product;
+            }
+        }
+
+        return null;
+    }
+
+    /* =========================
+       Price
+    ========================= */
+
+    function getPriceInfo(product) {
+        if (!product) {
+            return {
+                current: '',
+                original: '',
+                currency: ''
+            };
+        }
+
+        const price =
+            toNumber(product.price);
+
+        const salePrice =
+            toNumber(product.sale_price);
+
+        const regularPrice =
+            toNumber(
+                product.regular_price
+            );
+
+        const currency =
+            product.price?.currency ||
+            product.sale_price?.currency ||
+            product.regular_price?.currency ||
+            'SAR';
+
+        /*
+         * Salla can return:
+         *
+         * price
+         * regular_price
+         * sale_price
+         *
+         * We only use real positive values.
+         */
+
+        let current = null;
+        let original = null;
+
+        /*
+         * If sale_price exists and is lower
+         * than the regular/original price,
+         * use it as the current price.
+         */
+        if (
+            salePrice !== null &&
+            regularPrice !== null &&
+            salePrice < regularPrice
+        ) {
+            current = salePrice;
+            original = regularPrice;
+        }
+
+        /*
+         * Some Salla responses put the current
+         * selling price in "price" and the old
+         * price in "regular_price".
+         */
+        else if (
+            price !== null &&
+            regularPrice !== null &&
+            regularPrice > price
+        ) {
+            current = price;
+            original = regularPrice;
+        }
+
+        /*
+         * If sale_price is valid and lower than price.
+         */
+        else if (
+            salePrice !== null &&
+            price !== null &&
+            salePrice < price
+        ) {
+            current = salePrice;
+            original = price;
+        }
+
+        /*
+         * Normal product with one price.
+         */
+        else if (price !== null) {
+            current = price;
+        }
+
+        /*
+         * Fallback if only sale_price exists.
+         */
+        else if (salePrice !== null) {
+            current = salePrice;
+        }
+
+        /*
+         * Fallback if only regular_price exists.
+         */
+        else if (regularPrice !== null) {
+            current = regularPrice;
+        }
+
+        return {
+            current:
+                current !== null
+                    ? formatNumber(current)
+                    : '',
+
+            original:
+                original !== null
+                    ? formatNumber(original)
+                    : '',
+
+            currency:
+                currency || 'SAR'
+        };
+    }
+
+    function buildPriceText(product) {
+        const price =
+            getPriceInfo(product);
+
+        if (!price.current) {
+            return '';
+        }
+
+        if (
+            price.original &&
+            price.original !== price.current
+        ) {
+            return (
+                `السعر: ${price.current} ${price.currency} ` +
+                `بدل ${price.original} ${price.currency}`
+            );
+        }
+
+        return (
+            `السعر: ${price.current} ${price.currency}`
+        );
+    }
+
+    /* =========================
+       Product Name
+    ========================= */
+
+    function getProductName(product) {
+        if (
+            product &&
+            product.name
+        ) {
+            return String(
+                product.name
+            ).trim();
         }
 
         const selectors = [
@@ -192,9 +510,14 @@
             '[data-product-title]'
         ];
 
-        for (const selector of selectors) {
+        for (
+            const selector
+            of selectors
+        ) {
             const element =
-                document.querySelector(selector);
+                document.querySelector(
+                    selector
+                );
 
             if (
                 element &&
@@ -212,49 +535,59 @@
             'هذا المنتج';
     }
 
-    function getProductPrice() {
-        const configPrice =
-            getSallaConfig('page.price');
+    /* =========================
+       Product URL
+    ========================= */
 
-        if (configPrice) {
-            return String(configPrice);
+    function getProductUrl(product) {
+        if (
+            product &&
+            product.urls &&
+            product.urls.customer
+        ) {
+            return String(
+                product.urls.customer
+            );
         }
 
-        const selectors = [
-            '[class*="price"]',
-            '[class*="product-price"]',
-            '[data-product-price]'
-        ];
-
-        for (const selector of selectors) {
-            const elements =
-                document.querySelectorAll(selector);
-
-            for (const element of elements) {
-                const text =
-                    element.textContent
-                        .trim()
-                        .replace(/\s+/g, ' ');
-
-                if (
-                    text &&
-                    /\d/.test(text)
-                ) {
-                    return text;
-                }
-            }
+        if (
+            product &&
+            product.url
+        ) {
+            return String(
+                product.url
+            );
         }
 
-        return '';
-    }
-
-    function getProductUrl() {
         return window.location.href;
     }
 
     /* =========================
-       Out Of Stock Detection
+       Out Of Stock
     ========================= */
+
+    function isProductOutOfStock(product) {
+        if (product) {
+
+            if (
+                product.is_available === false ||
+                product.is_out_of_stock === true
+            ) {
+                return true;
+            }
+
+            if (
+                product.status === 'out' ||
+                product.status === 'out-of-stock' ||
+                product.status === 'sold_out' ||
+                product.status === 'sold-out'
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     function getComponentStatus(element) {
         if (!element) {
@@ -267,9 +600,14 @@
             'data-product-status'
         ];
 
-        for (const attribute of attributes) {
+        for (
+            const attribute
+            of attributes
+        ) {
             const value =
-                element.getAttribute(attribute);
+                element.getAttribute(
+                    attribute
+                );
 
             if (value) {
                 return String(value)
@@ -278,90 +616,44 @@
             }
         }
 
-        /*
-         * Web component property
-         */
-        const properties = [
-            'productStatus',
-            'status'
-        ];
-
-        for (const property of properties) {
-            try {
-                const value =
-                    element[property];
-
-                if (
-                    typeof value === 'string' &&
-                    value.trim()
-                ) {
-                    return value
-                        .trim()
-                        .toLowerCase();
-                }
-            } catch (error) {}
-        }
+        try {
+            if (
+                typeof element.productStatus ===
+                'string'
+            ) {
+                return element.productStatus
+                    .trim()
+                    .toLowerCase();
+            }
+        } catch (error) {}
 
         return '';
     }
 
-    function isOutOfStock() {
-        /*
-         * Salla's official product button
-         */
-        const productButtons =
+    function pageIsOutOfStock() {
+        const buttons =
             document.querySelectorAll(
                 'salla-add-product-button'
             );
 
         for (
-            const component
-            of productButtons
+            const button
+            of buttons
         ) {
             const status =
-                getComponentStatus(component);
+                getComponentStatus(
+                    button
+                );
 
             if (
                 status === 'out' ||
-                status === 'out-of-stock' ||
-                status === 'out_of_stock' ||
-                status === 'sold-out' ||
-                status === 'sold_out'
+                status === 'out-and-notify' ||
+                status === 'out-of-stock'
             ) {
                 return true;
             }
-
-            /*
-             * Check disabled state
-             */
-            if (
-                component.hasAttribute('disabled') ||
-                component.getAttribute('aria-disabled') === 'true'
-            ) {
-                const text =
-                    (
-                        component.textContent ||
-                        ''
-                    )
-                        .trim()
-                        .toLowerCase();
-
-                if (
-                    text.includes('نفد') ||
-                    text.includes('غير متوفر') ||
-                    text.includes('نفذت') ||
-                    text.includes('sold out') ||
-                    text.includes('out of stock') ||
-                    text.includes('unavailable')
-                ) {
-                    return true;
-                }
-            }
         }
 
-        /*
-         * Salla availability component
-         */
         const availability =
             document.querySelector(
                 'salla-product-availability'
@@ -371,99 +663,18 @@
             return true;
         }
 
-        /*
-         * Generic fallback checks
-         */
-        const possibleButtons =
-            document.querySelectorAll(
-                'button, a, [role="button"]'
-            );
-
-        for (
-            const element
-            of possibleButtons
-        ) {
-            const text =
-                (
-                    element.textContent ||
-                    ''
-                )
-                    .trim()
-                    .toLowerCase();
-
-            if (!text) {
-                continue;
-            }
-
-            const looksSoldOut =
-                text.includes('نفد المخزون') ||
-                text.includes('غير متوفر') ||
-                text.includes('نفد') ||
-                text.includes('نفذت الكمية') ||
-                text.includes('sold out') ||
-                text.includes('out of stock') ||
-                text.includes('unavailable');
-
-            if (
-                looksSoldOut &&
-                (
-                    element.disabled ||
-                    element.getAttribute(
-                        'aria-disabled'
-                    ) === 'true'
-                )
-            ) {
-                return true;
-            }
-        }
-
         return false;
     }
 
     /* =========================
-       Find Product Button
+       WhatsApp URL
     ========================= */
 
-    function findProductButton() {
-        /*
-         * Official Salla component
-         */
-        const official =
-            document.querySelector(
-                'salla-add-product-button'
-            );
-
-        if (official) {
-            return official;
-        }
-
-        /*
-         * Fallbacks for themes
-         */
-        const selectors = [
-            '[data-product-id] button',
-            '.product-form button',
-            '.product-details button',
-            'button[type="submit"]'
-        ];
-
-        for (const selector of selectors) {
-            const element =
-                document.querySelector(selector);
-
-            if (element) {
-                return element;
-            }
-        }
-
-        return null;
-    }
-
-    /* =========================
-       Create WhatsApp URL
-    ========================= */
-
-    function createWhatsAppUrl() {
+    function createWhatsAppUrl(
+        product,
+        productName,
+        productUrl
+    ) {
         if (
             !settings ||
             !settings.whatsappNumber
@@ -471,22 +682,13 @@
             return null;
         }
 
-        let number =
+        const number =
             settings.whatsappNumber
                 .replace(/\D/g, '');
 
         if (!number) {
             return null;
         }
-
-        const productName =
-            getProductName();
-
-        const productPrice =
-            getProductPrice();
-
-        const productUrl =
-            getProductUrl();
 
         let message =
             settings.customMessage ||
@@ -495,53 +697,139 @@
         message +=
             `\n\nالمنتج: ${productName}`;
 
-        if (productPrice) {
+        const priceText =
+            buildPriceText(product);
+
+        if (priceText) {
             message +=
-                `\nالسعر: ${productPrice}`;
+                `\n${priceText}`;
         }
 
         message +=
             `\nالرابط: ${productUrl}`;
 
         return (
-            'https://wa.me/' +
-            number +
-            '?text=' +
-            encodeURIComponent(message)
+            `https://wa.me/${number}` +
+            `?text=${encodeURIComponent(message)}`
         );
     }
 
     /* =========================
-       Create Button
+       Button Styling
     ========================= */
 
-    function createButton() {
-        if (
-            document.getElementById(
-                BUTTON_ID
-            )
-        ) {
-            return;
-        }
+    function styleButton(button) {
+        button.style.cssText = `
+            display:block;
+            width:100%;
+            margin-top:10px;
+            padding:12px 14px;
+            background:#25D366;
+            color:#ffffff;
+            border-radius:10px;
+            text-align:center;
+            text-decoration:none;
+            font-size:14px;
+            font-weight:700;
+            line-height:1.4;
+            box-sizing:border-box;
+            cursor:pointer;
+            transition:opacity .2s ease;
+        `;
 
+        button.addEventListener(
+            'mouseenter',
+            () => {
+                button.style.opacity = '0.88';
+            }
+        );
+
+        button.addEventListener(
+            'mouseleave',
+            () => {
+                button.style.opacity = '1';
+            }
+        );
+    }
+
+    /* =========================
+       Product Page Button
+    ========================= */
+
+    async function handleProductPage() {
         const productButton =
-            findProductButton();
+            document.querySelector(
+                'salla-add-product-button'
+            );
 
         if (!productButton) {
             return;
         }
 
+        let product =
+            getProductFromPage();
+
+        const outOfStock =
+            pageIsOutOfStock() ||
+            isProductOutOfStock(product);
+
+        if (!outOfStock) {
+            const oldButton =
+                document.getElementById(
+                    `${BUTTON_PREFIX}-product`
+                );
+
+            if (oldButton) {
+                oldButton.remove();
+            }
+
+            return;
+        }
+
+        const loaded =
+            await loadSettings();
+
+        if (!loaded) {
+            return;
+        }
+
+        if (
+            !product ||
+            typeof product !== 'object'
+        ) {
+            product = {};
+        }
+
+        const productName =
+            getProductName(product);
+
+        const productUrl =
+            getProductUrl(product);
+
         const whatsappUrl =
-            createWhatsAppUrl();
+            createWhatsAppUrl(
+                product,
+                productName,
+                productUrl
+            );
 
         if (!whatsappUrl) {
+            return;
+        }
+
+        if (
+            document.getElementById(
+                `${BUTTON_PREFIX}-product`
+            )
+        ) {
             return;
         }
 
         const button =
             document.createElement('a');
 
-        button.id = BUTTON_ID;
+        button.id =
+            `${BUTTON_PREFIX}-product`;
 
         button.href =
             whatsappUrl;
@@ -555,43 +843,8 @@
         button.textContent =
             '🔔 أبلغني عبر واتساب عند توفر المنتج';
 
-        button.style.cssText = `
-            display:block;
-            width:100%;
-            margin-top:12px;
-            padding:14px 18px;
-            background:#25D366;
-            color:#ffffff;
-            border-radius:12px;
-            text-align:center;
-            text-decoration:none;
-            font-size:15px;
-            font-weight:700;
-            line-height:1.4;
-            box-sizing:border-box;
-            cursor:pointer;
-            transition:opacity .2s ease;
-        `;
+        styleButton(button);
 
-        button.addEventListener(
-            'mouseenter',
-            function () {
-                button.style.opacity =
-                    '0.88';
-            }
-        );
-
-        button.addEventListener(
-            'mouseleave',
-            function () {
-                button.style.opacity =
-                    '1';
-            }
-        );
-
-        /*
-         * Insert after the Salla product button
-         */
         productButton.insertAdjacentElement(
             'afterend',
             button
@@ -599,126 +852,48 @@
     }
 
     /* =========================
-       Main Check
+       Homepage Product Cards
     ========================= */
 
-    async function checkProduct() {
-        /*
-         * Only run on product pages
-         */
-        const pageId =
-            getSallaConfig('page.id');
+    async function handleProductCards() {
+        const cards =
+            document.querySelectorAll(
+                'salla-product-card'
+            );
 
-        if (!pageId) {
+        if (!cards.length) {
             return;
         }
 
-        const outOfStock =
-            isOutOfStock();
-
-        if (!outOfStock) {
-            const existing =
-                document.getElementById(
-                    BUTTON_ID
-                );
-
-            if (existing) {
-                existing.remove();
-            }
-
-            return;
-        }
-
-        const loadedSettings =
+        const loaded =
             await loadSettings();
 
-        if (!loadedSettings) {
+        if (!loaded) {
             return;
         }
 
-        createButton();
-    }
+        cards.forEach((card, index) => {
 
-    /* =========================
-       Observe Salla Rendering
-    ========================= */
+            const product =
+                getProductFromCard(card);
 
-    let checkTimer = null;
-
-    function scheduleCheck() {
-        clearTimeout(checkTimer);
-
-        checkTimer = setTimeout(
-            function () {
-                checkProduct();
-            },
-            300
-        );
-    }
-
-    const observer =
-        new MutationObserver(
-            function () {
-                scheduleCheck();
+            if (!product) {
+                return;
             }
-        );
 
-    function start() {
-        /*
-         * Observe page changes because
-         * Salla web components render dynamically.
-         */
-        if (document.body) {
-            observer.observe(
-                document.body,
-                {
-                    childList: true,
-                    subtree: true,
-                    attributes: true,
-                    attributeFilter: [
-                        'product-status',
-                        'status',
-                        'disabled',
-                        'aria-disabled'
-                    ]
-                }
-            );
-        }
+            const cardOutOfStock =
+                isProductOutOfStock(
+                    product
+                );
 
-        /*
-         * Initial attempts
-         */
-        checkProduct();
+            const buttonId =
+                `${BUTTON_PREFIX}-card-${index}`;
 
-        setTimeout(
-            checkProduct,
-            1000
-        );
+            const existing =
+                document.getElementById(
+                    buttonId
+                );
 
-        setTimeout(
-            checkProduct,
-            2500
-        );
-
-        setTimeout(
-            checkProduct,
-            5000
-        );
-    }
-
-    if (
-        document.readyState ===
-        'loading'
-    ) {
-        document.addEventListener(
-            'DOMContentLoaded',
-            start,
-            {
-                once: true
-            }
-        );
-    } else {
-        start();
-    }
-
-})();
+            if (!cardOutOfStock) {
+                if (existing) {
+                    
