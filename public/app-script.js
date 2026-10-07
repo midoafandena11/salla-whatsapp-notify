@@ -190,9 +190,25 @@
             'هذا المنتج';
     }
 
+    /* =========================
+       Price
+    ========================= */
+
     function cleanPriceText(str) {
-        if (!str) {
-            return '';
+        if (!str) return '';
+
+        if (
+            typeof str === 'object'
+        ) {
+            if (
+                str.amount !== undefined
+            ) {
+                str = str.amount;
+            } else if (
+                str.value !== undefined
+            ) {
+                str = str.value;
+            }
         }
 
         return String(str)
@@ -200,7 +216,7 @@
             .trim();
     }
 
-    function priceToNumber(value) {
+    function getPriceNumber(value) {
         if (
             value === null ||
             value === undefined
@@ -214,321 +230,227 @@
             if (
                 value.amount !== undefined
             ) {
-                return priceToNumber(
-                    value.amount
-                );
-            }
-
-            if (
+                value = value.amount;
+            } else if (
                 value.value !== undefined
             ) {
-                return priceToNumber(
-                    value.value
-                );
+                value = value.value;
             }
         }
 
         let text =
-            String(value).trim();
-
-        if (!text) {
-            return null;
-        }
-
-        text = text
-            .replace(/[٠-٩]/g, function (d) {
-                return String(
-                    '٠١٢٣٤٥٦٧٨٩'.indexOf(d)
-                );
-            })
-            .replace(/[۰-۹]/g, function (d) {
-                return String(
-                    '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)
-                );
-            })
-            .replace(/,/g, '')
-            .replace(/٬/g, '');
+            String(value)
+                .replace(/[٠-٩]/g, function (d) {
+                    return String(
+                        '٠١٢٣٤٥٦٧٨٩'.indexOf(d)
+                    );
+                })
+                .replace(/[۰-۹]/g, function (d) {
+                    return String(
+                        '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)
+                    );
+                })
+                .replace(/,/g, '')
+                .replace(/٬/g, '');
 
         const match =
             text.match(
-                /-?\d+(?:\.\d+)?/
+                /\d+(?:\.\d+)?/
             );
 
-        if (!match) {
-            return null;
-        }
-
-        const number =
-            Number(match[0]);
-
-        return Number.isFinite(number)
-            ? number
+        return match
+            ? Number(match[0])
             : null;
     }
 
     function getProductPrice() {
-        let currentPrice = '';
-        let oldPrice = '';
+        let regularPrice = '';
+        let salePrice = '';
 
         try {
-            if (
-                window.salla &&
-                window.salla.config
-            ) {
-                const prod =
-                    window.salla.config.get(
-                        'product'
-                    ) ||
-                    window.salla.product;
+            const prod =
+                getSallaConfig('product') ||
+                (
+                    window.salla &&
+                    window.salla.product
+                );
 
-                if (prod) {
-                    const price =
-                        prod.price;
+            if (prod) {
+                const regular =
+                    prod.regular_price ||
+                    prod.compare_price;
 
-                    const regular =
-                        prod.regular_price;
+                const sale =
+                    prod.sale_price;
 
-                    const compare =
-                        prod.compare_price;
+                const price =
+                    prod.price;
 
-                    const sale =
-                        prod.sale_price;
-
-                    if (
-                        sale !== undefined &&
-                        sale !== null &&
-                        priceToNumber(sale) !== null &&
-                        priceToNumber(sale) > 0
-                    ) {
-                        currentPrice =
-                            String(
-                                sale.amount !== undefined
-                                    ? sale.amount
-                                    : sale
-                            ).trim();
-                    }
-
-                    if (
-                        !currentPrice &&
-                        price !== undefined &&
-                        price !== null
-                    ) {
-                        if (
-                            typeof price === 'object' &&
-                            price.amount !== undefined
-                        ) {
-                            currentPrice =
-                                String(
-                                    price.amount
-                                ).trim();
-                        } else {
-                            currentPrice =
-                                String(
-                                    price
-                                ).trim();
-                        }
-                    }
-
-                    if (
-                        regular !== undefined &&
-                        regular !== null
-                    ) {
-                        if (
-                            typeof regular === 'object' &&
-                            regular.amount !== undefined
-                        ) {
-                            oldPrice =
-                                String(
-                                    regular.amount
-                                ).trim();
-                        } else {
-                            oldPrice =
-                                String(
-                                    regular
-                                ).trim();
-                        }
-                    }
-
-                    if (
-                        !oldPrice &&
-                        compare !== undefined &&
-                        compare !== null
-                    ) {
-                        if (
-                            typeof compare === 'object' &&
-                            compare.amount !== undefined
-                        ) {
-                            oldPrice =
-                                String(
-                                    compare.amount
-                                ).trim();
-                        } else {
-                            oldPrice =
-                                String(
-                                    compare
-                                ).trim();
-                        }
-                    }
-
-                    const currentNumber =
-                        priceToNumber(
-                            currentPrice
-                        );
-
-                    const oldNumber =
-                        priceToNumber(
-                            oldPrice
-                        );
-
-                    if (
-                        currentNumber !== null &&
-                        oldNumber !== null
-                    ) {
-                        if (
-                            currentNumber >= oldNumber
-                        ) {
-                            oldPrice = '';
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(
-                'Salla price read error:',
-                error
-            );
-                                }
+                /*
+                 * لو sale_price موجود وأكبر من صفر
+                 * فهو السعر بعد الخصم.
+                 */
                 if (
-            !currentPrice &&
-            !oldPrice
-        ) {
-            const priceComponents =
-                document.querySelectorAll(
-                    'salla-price, salla-product-price, .product-price'
-                );
-
-            priceComponents.forEach(
-                function (comp) {
-                    if (
-                        comp.getAttribute(
-                            'regular-price'
-                        )
-                    ) {
-                        oldPrice =
-                            comp.getAttribute(
-                                'regular-price'
-                            );
-                    }
-
-                    if (
-                        comp.getAttribute(
-                            'price'
-                        )
-                    ) {
-                        currentPrice =
-                            comp.getAttribute(
-                                'price'
-                            );
-                    }
-
-                    const oldElement =
-                        comp.querySelector(
-                            '.price-regular, .price-before, del, s'
-                        );
-
-                    const currentElement =
-                        comp.querySelector(
-                            '.price-sale, .price-after, .main-price'
-                        );
-
-                    if (
-                        oldElement &&
-                        oldElement.textContent
-                    ) {
-                        oldPrice =
-                            cleanPriceText(
-                                oldElement.textContent
-                            );
-                    }
-
-                    if (
-                        currentElement &&
-                        currentElement.textContent
-                    ) {
-                        currentPrice =
-                            cleanPriceText(
-                                currentElement.textContent
-                            );
-                    }
+                    sale &&
+                    getPriceNumber(sale) > 0
+                ) {
+                    salePrice =
+                        cleanPriceText(sale);
+                } else if (price) {
+                    salePrice =
+                        cleanPriceText(price);
                 }
-            );
-        }
 
-        if (
-            !currentPrice &&
-            !oldPrice
-        ) {
-            const metaPrice =
-                document.querySelector(
-                    'meta[property="product:price:amount"]'
-                );
-
-            const metaCurrency =
-                document.querySelector(
-                    'meta[property="product:price:currency"]'
-                );
-
-            if (metaPrice) {
-                currentPrice =
-                    `${metaPrice.content} ${
-                        metaCurrency
-                            ? metaCurrency.content
-                            : ''
-                    }`.trim();
+                if (regular) {
+                    regularPrice =
+                        cleanPriceText(regular);
+                }
             }
-        }
+        } catch (error) {}
 
-        const currentNumber =
-            priceToNumber(
-                currentPrice
+        /*
+         * قراءة السعر الظاهر في الصفحة.
+         * ده مهم لو Salla API فيها 349
+         * بينما السعر الحالي الظاهر 174.
+         */
+        const priceComponents =
+            document.querySelectorAll(
+                'salla-price, salla-product-price, .product-price'
             );
 
-        const oldNumber =
-            priceToNumber(
-                oldPrice
-            );
+        priceComponents.forEach(
+            function (comp) {
+                const regularAttr =
+                    comp.getAttribute(
+                        'regular-price'
+                    );
 
-        if (
-            currentNumber !== null &&
-            oldNumber !== null
-        ) {
-            if (
-                currentNumber >= oldNumber
-            ) {
-                oldPrice = '';
+                const priceAttr =
+                    comp.getAttribute(
+                        'price'
+                    );
+
+                if (
+                    regularAttr
+                ) {
+                    regularPrice =
+                        cleanPriceText(
+                            regularAttr
+                        );
+                }
+
+                if (
+                    priceAttr
+                ) {
+                    salePrice =
+                        cleanPriceText(
+                            priceAttr
+                        );
+                }
+
+                const regularElem =
+                    comp.querySelector(
+                        '.price-regular, .price-before, del, s'
+                    );
+
+                const saleElem =
+                    comp.querySelector(
+                        '.price-sale, .price-after, .main-price'
+                    );
+
+                if (
+                    regularElem &&
+                    regularElem.textContent
+                ) {
+                    regularPrice =
+                        cleanPriceText(
+                            regularElem.textContent
+                        );
+                }
+
+                if (
+                    saleElem &&
+                    saleElem.textContent
+                ) {
+                    salePrice =
+                        cleanPriceText(
+                            saleElem.textContent
+                        );
+                }
             }
+        );
+
+        const regularNumber =
+            getPriceNumber(
+                regularPrice
+            );
+
+        const saleNumber =
+            getPriceNumber(
+                salePrice
+            );
+
+        /*
+         * خصم حقيقي فقط لو الحالي أقل من القديم.
+         */
+        if (
+            regularNumber !== null &&
+            saleNumber !== null &&
+            saleNumber < regularNumber
+        ) {
+            return {
+                regularPrice:
+                    cleanPriceText(
+                        regularPrice
+                    ),
+                salePrice:
+                    cleanPriceText(
+                        salePrice
+                    )
+            };
         }
 
-        if (
-            !currentPrice &&
-            oldPrice
-        ) {
-            currentPrice =
-                oldPrice;
+        /*
+         * غير كده سعر واحد فقط.
+         */
+        if (salePrice) {
+            return {
+                regularPrice: '',
+                salePrice:
+                    cleanPriceText(
+                        salePrice
+                    )
+            };
+        }
 
-            oldPrice = '';
+        if (regularPrice) {
+            return {
+                regularPrice: '',
+                salePrice:
+                    cleanPriceText(
+                        regularPrice
+                    )
+            };
+        }
+
+        const metaPrice =
+            document.querySelector(
+                'meta[property="product:price:amount"]'
+            );
+
+        if (metaPrice) {
+            return {
+                regularPrice: '',
+                salePrice:
+                    cleanPriceText(
+                        metaPrice.content
+                    )
+            };
         }
 
         return {
-            regularPrice:
-                cleanPriceText(
-                    oldPrice
-                ),
-
-            salePrice:
-                cleanPriceText(
-                    currentPrice
-                )
+            regularPrice: '',
+            salePrice: ''
         };
     }
 
@@ -549,9 +471,7 @@
 
         for (const attribute of attributes) {
             const value =
-                element.getAttribute(
-                    attribute
-                );
+                element.getAttribute(attribute);
 
             if (value) {
                 return String(value)
@@ -595,9 +515,7 @@
             of productButtons
         ) {
             const status =
-                getComponentStatus(
-                    component
-                );
+                getComponentStatus(component);
 
             if (
                 status === 'out' ||
@@ -610,12 +528,8 @@
             }
 
             if (
-                component.hasAttribute(
-                    'disabled'
-                ) ||
-                component.getAttribute(
-                    'aria-disabled'
-                ) === 'true'
+                component.hasAttribute('disabled') ||
+                component.getAttribute('aria-disabled') === 'true'
             ) {
                 const text =
                     (
@@ -691,9 +605,8 @@
         }
 
         return false;
-    }
-
-    function findProductButton() {
+            }
+        function findProductButton() {
         const official =
             document.querySelector(
                 'salla-add-product-button'
@@ -712,9 +625,7 @@
 
         for (const selector of selectors) {
             const element =
-                document.querySelector(
-                    selector
-                );
+                document.querySelector(selector);
 
             if (element) {
                 return element;
@@ -723,7 +634,8 @@
 
         return null;
     }
-        function createWhatsAppUrl() {
+
+    function createWhatsAppUrl() {
         if (
             !settings ||
             !settings.whatsappNumber
@@ -755,15 +667,20 @@
         message +=
             `\n\nالمنتج: ${productName}`;
 
-        if (
-            priceInfo.regularPrice &&
-            priceInfo.salePrice &&
-            priceToNumber(
-                priceInfo.salePrice
-            ) <
-            priceToNumber(
+        const regularNumber =
+            getPriceNumber(
                 priceInfo.regularPrice
-            )
+            );
+
+        const saleNumber =
+            getPriceNumber(
+                priceInfo.salePrice
+            );
+
+        if (
+            regularNumber !== null &&
+            saleNumber !== null &&
+            saleNumber < regularNumber
         ) {
             message +=
                 `\nالسعر قبل الخصم: ${priceInfo.regularPrice}`;
@@ -911,17 +828,14 @@
     let checkTimer = null;
 
     function scheduleCheck() {
-        clearTimeout(
-            checkTimer
-        );
+        clearTimeout(checkTimer);
 
-        checkTimer =
-            setTimeout(
-                function () {
-                    checkProduct();
-                },
-                300
-            );
+        checkTimer = setTimeout(
+            function () {
+                checkProduct();
+            },
+            300
+        );
     }
 
     const observer =
