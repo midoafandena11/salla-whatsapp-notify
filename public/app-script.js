@@ -203,18 +203,20 @@
     }
 
     /* =========================================================
-       Updated getProductPrice Function (معالجة دقيقة للأسعار)
+       Fixed getProductPrice Function
     ========================================================= */
-    function extractNumber(val) {
-        if (!val) return null;
-        const match = String(val).match(/\d+(\.\d+)?/);
-        return match ? parseFloat(match[0]) : null;
+    function cleanPrice(val) {
+        if (!val) return '';
+        if (typeof val === 'object') {
+            val = val.amount || val.price || val.formatted || '';
+        }
+        let str = String(val).replace(/\s+/g, ' ').trim();
+        return str;
     }
 
     function getProductPrice() {
         let regularPriceStr = '';
         let salePriceStr = '';
-        let currency = 'ر.س';
 
         try {
             let prod = null;
@@ -228,17 +230,12 @@
             }
 
             if (prod) {
-                if (prod.currency) currency = prod.currency;
+                if (prod.regular_price !== undefined) regularPriceStr = cleanPrice(prod.regular_price);
+                else if (prod.compare_price !== undefined) regularPriceStr = cleanPrice(prod.compare_price);
 
-                const pPrice = prod.price?.amount ?? prod.price;
-                const pRegular = prod.regular_price?.amount ?? prod.regular_price ?? prod.compare_price?.amount ?? prod.compare_price;
-
-                if (pPrice !== undefined && pPrice !== null) salePriceStr = String(pPrice);
-                if (pRegular !== undefined && pRegular !== null) regularPriceStr = String(pRegular);
+                if (prod.price !== undefined) salePriceStr = cleanPrice(prod.price);
             }
-        } catch (e) {
-            console.warn('Error reading Salla product object:', e);
-        }
+        } catch (e) {}
 
         if (!salePriceStr && !regularPriceStr) {
             const priceComp = document.querySelector('salla-price, .product-price');
@@ -246,39 +243,35 @@
                 const regAttr = priceComp.getAttribute('regular-price');
                 const priceAttr = priceComp.getAttribute('price');
 
-                if (regAttr) regularPriceStr = regAttr;
-                if (priceAttr) salePriceStr = priceAttr;
+                if (regAttr) regularPriceStr = cleanPrice(regAttr);
+                if (priceAttr) salePriceStr = cleanPrice(priceAttr);
 
                 if (!regularPriceStr || !salePriceStr) {
                     const regElem = priceComp.querySelector('.price-regular, .price-before, del, s');
                     const saleElem = priceComp.querySelector('.price-sale, .price-after, .main-price');
 
-                    if (regElem) regularPriceStr = regElem.textContent;
-                    if (saleElem) salePriceStr = saleElem.textContent;
+                    if (regElem) regularPriceStr = cleanPrice(regElem.textContent);
+                    if (saleElem) salePriceStr = cleanPrice(saleElem.textContent);
                 }
             }
         }
 
-        const regNum = extractNumber(regularPriceStr);
-        const saleNum = extractNumber(salePriceStr);
+        if (regularPriceStr && !regularPriceStr.includes('ر.س') && !regularPriceStr.includes('SAR')) {
+            regularPriceStr += ' ر.س';
+        }
+        if (salePriceStr && !salePriceStr.includes('ر.س') && !salePriceStr.includes('SAR')) {
+            salePriceStr += ' ر.س';
+        }
 
-        let finalRegular = '';
-        let finalSale = '';
-
-        if (regNum !== null && saleNum !== null && regNum > saleNum) {
-            finalRegular = `${regNum} ${currency}`;
-            finalSale = `${saleNum} ${currency}`;
-        } else if (saleNum !== null) {
-            finalSale = `${saleNum} ${currency}`;
-        } else if (regNum !== null) {
-            finalSale = `${regNum} ${currency}`;
+        if (regularPriceStr && salePriceStr && regularPriceStr === salePriceStr) {
+            regularPriceStr = '';
         }
 
         return {
-            regularPrice: finalRegular,
-            salePrice: finalSale
+            regularPrice: regularPriceStr,
+            salePrice: salePriceStr
         };
-            }
+    }
         function getProductUrl() {
         return window.location.href;
     }
@@ -723,4 +716,3 @@
     }
 
 })();
-    
