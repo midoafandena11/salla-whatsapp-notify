@@ -457,58 +457,36 @@
         return '';
     }
 
-    function cleanPriceText(
-        value
-    ) {
-        if (!value) {
-            return '';
-        }
-
-        return String(value)
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
     function getProductPrice(
-        productButton,
-        productId
+        productButton
     ) {
         if (!productButton) {
             return '';
         }
 
         /*
-         * amount هو مصدر السعر عندما نكون
-         * فعليًا على صفحة المنتج فقط.
+         * مهم:
+         * amount نستخدمه فقط إذا كان موجودًا
+         * على الزر نفسه.
          *
-         * لا نعتمد عليه في الرئيسية أو الأقسام،
-         * لأن زر out-and-notify هناك لا يحتوي عليه.
+         * في الرئيسية/الأقسام زر out-and-notify
+         * لا يحتوي amount، لذلك نبحث داخل
+         * نفس كارت المنتج.
          */
-        if (
-            isCurrentProductPage(
-                productId
-            )
-        ) {
-            const amount =
-                productButton.getAttribute(
-                    'amount'
-                );
+        const amount =
+            productButton.getAttribute(
+                'amount'
+            );
 
-            if (
-                amount !== null &&
-                String(amount).trim()
-            ) {
-                return cleanPriceText(
-                    amount
-                );
-            }
+        if (
+            amount !== null &&
+            String(amount).trim()
+        ) {
+            return String(
+                amount
+            ).trim();
         }
 
-        /*
-         * خارج صفحة المنتج:
-         * السعر يتم البحث عنه داخل نفس كارت المنتج.
-         * لا يوجد اعتماد على h4 أو tag محدد.
-         */
         const container =
             findProductContainer(
                 productButton
@@ -521,13 +499,8 @@
         const priceSelectors = [
             '[data-product-price]',
             '[data-price]',
-            '[data-product-amount]',
-            '[data-amount]',
             '.product-price',
             '.price',
-            '.product-card-price',
-            '.product__price',
-            '.product-item-price',
             'salla-price'
         ];
 
@@ -550,72 +523,14 @@
                         : '';
 
                 if (text) {
-                    return cleanPriceText(
-                        text
-                    );
+                    return text;
                 }
-            }
-        }
-
-        /*
-         * fallback عام بدون ربط السعر بـ h4
-         * أو أي tag معين.
-         *
-         * نبحث عن عناصر تحمل class أو attribute
-         * اسمها متعلق بالسعر.
-         */
-        const allElements =
-            Array.from(
-                container.querySelectorAll(
-                    '[class],[id],[data-testid],[aria-label]'
-                )
-            );
-
-        for (
-            const element of allElements
-        ) {
-            const meta =
-                [
-                    element.className,
-                    element.id,
-                    element.getAttribute(
-                        'data-testid'
-                    ),
-                    element.getAttribute(
-                        'aria-label'
-                    )
-                ]
-                .filter(Boolean)
-                .join(' ')
-                .toLowerCase();
-
-            if (
-                !/(price|amount|cost|سعر|السعر|ريال|sar)/i.test(
-                    meta
-                )
-            ) {
-                continue;
-            }
-
-            const text =
-                element.textContent
-                    ? element.textContent.trim()
-                    : '';
-
-            if (
-                text &&
-                /\d/.test(text)
-            ) {
-                return cleanPriceText(
-                    text
-                );
             }
         }
 
         return '';
     }
-
-    function getProductUrl(
+        function getProductUrl(
         productButton,
         productId
     ) {
@@ -648,7 +563,8 @@
 
         return '';
     }
-        function isOutOfStock(
+
+    function isOutOfStock(
         productButton
     ) {
         const status =
@@ -661,13 +577,25 @@
         );
     }
 
+    /*
+     * =====================================================
+     * OPTIONS
+     * =====================================================
+     *
+     * هذه الوظيفة لا تعمل إلا في صفحة المنتج.
+     *
+     * لا تؤثر نهائيًا على:
+     * - الاسم
+     * - السعر
+     * - الرابط
+     * - ظهور الزر
+     * - الرئيسية
+     * - الأقسام
+     */
+
     function getSelectedOptions(
         productId
     ) {
-        /*
-         * الخيارات لا تدخل الرسالة إلا في
-         * صفحة المنتج نفسها.
-         */
         if (
             !isCurrentProductPage(
                 productId
@@ -714,6 +642,11 @@
                     selected.textContent || ''
                 ).trim();
 
+            /*
+             * تجاهل:
+             * اختر
+             * والقيمة الفارغة
+             */
             if (
                 !value ||
                 !text ||
@@ -733,7 +666,7 @@
                 const label =
                     document.querySelector(
                         'label[for="' +
-                        CSS.escape(selectId) +
+                        selectId +
                         '"]'
                     );
 
@@ -773,7 +706,9 @@
             DEFAULT_MESSAGE;
 
         if (message) {
-            lines.push(message);
+            lines.push(
+                message
+            );
         }
 
         if (productName) {
@@ -791,9 +726,8 @@
         }
 
         /*
-         * المقاسات والألوان وأي options
-         * تظهر هنا فقط إذا كانت موجودة
-         * ومحددة في صفحة المنتج.
+         * لا نضيف الخيارات إلا إذا كانت
+         * موجودة ومحددة في صفحة المنتج.
          */
         if (
             Array.isArray(
@@ -837,18 +771,21 @@
         const text =
             lines.join('\n');
 
+        const cleanNumber =
+            String(
+                whatsappNumber
+            ).replace(
+                /[^\d+]/g,
+                ''
+            );
+
         return (
             'https://wa.me/' +
-            encodeURIComponent(
-                String(
-                    whatsappNumber
-                ).replace(
-                    /[^\d+]/g,
-                    ''
-                )
-            ) +
+            cleanNumber +
             '?text=' +
-            encodeURIComponent(text)
+            encodeURIComponent(
+                text
+            )
         );
     }
 
@@ -900,17 +837,12 @@
             return null;
         }
 
-        const selector =
-            'a[data-salla-whatsapp-notify-button="' +
-            CSS.escape(
-                String(productId)
-            ) +
-            '"]';
-
         const buttons =
             Array.from(
                 container.querySelectorAll(
-                    selector
+                    'a[data-salla-whatsapp-notify-button="' +
+                    String(productId) +
+                    '"]'
                 )
             );
 
@@ -918,10 +850,6 @@
             return null;
         }
 
-        /*
-         * حماية من التكرار:
-         * نحتفظ بزر واحد فقط لنفس المنتج.
-         */
         const first =
             buttons[0];
 
@@ -973,15 +901,11 @@
                 String(productId)
             );
 
-            button.setAttribute(
-                'target',
-                '_blank'
-            );
+            button.target =
+                '_blank';
 
-            button.setAttribute(
-                'rel',
-                'noopener noreferrer'
-            );
+            button.rel =
+                'noopener noreferrer';
 
             button.innerHTML =
                 getWhatsAppIcon() +
@@ -1035,10 +959,6 @@
             button.style.minHeight =
                 '44px';
 
-            /*
-             * نضعه داخل نفس parent
-             * أسفل زر سلة الأصلي.
-             */
             parent.appendChild(
                 button
             );
@@ -1070,17 +990,12 @@
             return;
         }
 
-        const selector =
-            'a[data-salla-whatsapp-notify-button="' +
-            CSS.escape(
-                String(productId)
-            ) +
-            '"]';
-
         const buttons =
             Array.from(
                 container.querySelectorAll(
-                    selector
+                    'a[data-salla-whatsapp-notify-button="' +
+                    String(productId) +
+                    '"]'
                 )
             );
 
@@ -1089,7 +1004,7 @@
         ) {
             button.remove();
         }
-            }
+    }
         async function processProduct(
         productButton
     ) {
@@ -1133,9 +1048,10 @@
         }
 
         /*
-         * البيانات الأساسية الثلاثة
-         * موحدة لكل الأماكن:
-         * الاسم + السعر + الرابط.
+         * البيانات الأساسية:
+         * الاسم + السعر + الرابط
+         *
+         * لا علاقة لها بالـ options.
          */
         const productName =
             getProductName(
@@ -1145,8 +1061,7 @@
 
         const productPrice =
             getProductPrice(
-                productButton,
-                productId
+                productButton
             );
 
         const productUrl =
@@ -1156,8 +1071,9 @@
             );
 
         /*
-         * الـ options إضافة منفصلة
-         * ولا يتم قراءتها إلا في صفحة المنتج.
+         * الـ options تضاف فقط في صفحة
+         * المنتج، لو فيه مقاسات/ألوان
+         * أو أي خيارات محددة.
          */
         const selectedOptions =
             getSelectedOptions(
@@ -1267,9 +1183,8 @@
             }
 
             /*
-             * عند تغيير المقاس/اللون:
-             * نعيد بناء رابط واتساب لنفس
-             * المنتج الحالي فقط.
+             * إعادة بناء رابط واتساب عند
+             * تغيير المقاس أو اللون.
              */
             const productButtons =
                 findProductButtons(
