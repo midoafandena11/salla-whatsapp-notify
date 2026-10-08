@@ -488,6 +488,15 @@
     }
 
 
+    /*
+     * السعر مستقل تمامًا عن المتغيرات.
+     *
+     * الأولوية:
+     * 1- amount لو موجود.
+     * 2- سعر داخل نفس كارت المنتج.
+     *
+     * getSelectedOptions() لا علاقة له بالسعر.
+     */
     function getProductPrice(productButton) {
         if (!productButton) {
             return '';
@@ -508,24 +517,38 @@
                 productButton
             );
 
-        if (container) {
-            const selectors = [
-                '[data-product-price]',
-                '.product-price',
-                '.price'
-            ];
+        if (!container) {
+            return '';
+        }
 
-            for (const selector of selectors) {
-                const element =
-                    container.querySelector(
+        const priceSelectors = [
+            '[data-product-price]',
+            '[data-price]',
+            '.product-price',
+            '.price',
+            'salla-price'
+        ];
+
+        for (
+            const selector of priceSelectors
+        ) {
+            const elements =
+                Array.from(
+                    container.querySelectorAll(
                         selector
-                    );
+                    )
+                );
 
-                if (
-                    element &&
-                    element.textContent.trim()
-                ) {
-                    return element.textContent.trim();
+            for (
+                const element of elements
+            ) {
+                const text =
+                    element.textContent
+                        ? element.textContent.trim()
+                        : '';
+
+                if (text) {
+                    return text;
                 }
             }
         }
@@ -596,11 +619,12 @@
             text.includes('sold out');
 
         return disabled && stockText;
-                    }
+    }
         /*
-     * الاختيارات تُقرأ فقط في صفحة المنتج.
+     * المتغيرات تُقرأ فقط في صفحة المنتج.
      *
-     * الرئيسية والقوائم لا تدخل هنا نهائيًا.
+     * الرئيسية والأقسام والبحث:
+     * لا نطلب وجود أي options.
      */
     function getSelectedOptions(productButton) {
         const productId =
@@ -716,8 +740,7 @@
         }
 
         /*
-         * الاختيارات تظهر فقط في صفحة المنتج
-         * وإذا كان هناك اختيار فعلي.
+         * الاختيارات إضافة فقط في صفحة المنتج.
          */
         if (
             Array.isArray(selectedOptions) &&
@@ -794,12 +817,6 @@
     }
 
 
-    /*
-     * العثور على زر واتساب لنفس المنتج.
-     *
-     * لو سلة أعادت رسم DOM، نستخدم الزر الموجود
-     * بدل إنشاء زر جديد.
-     */
     function findWhatsAppButton(
         productButton,
         productId
@@ -832,9 +849,6 @@
                 const first =
                     buttons[0];
 
-                /*
-                 * تنظيف أي نسخة زائدة.
-                 */
                 buttons.slice(1).forEach(
                     (button) => {
                         button.remove();
@@ -865,10 +879,6 @@
             return null;
         }
 
-        /*
-         * لو موجود بالفعل:
-         * نحدث الرابط فقط.
-         */
         const existingButton =
             findWhatsAppButton(
                 productButton,
@@ -878,6 +888,37 @@
         if (existingButton) {
             existingButton.href =
                 whatsappUrl;
+
+            /*
+             * لو الزر موجود بالفعل،
+             * نتأكد أنه يأخذ مكانه تحت زر سلة.
+             */
+            const parent =
+                productButton.parentElement;
+
+            if (
+                parent &&
+                existingButton.parentElement !== parent
+            ) {
+                parent.appendChild(
+                    existingButton
+                );
+            }
+
+            existingButton.style.display =
+                'flex';
+
+            existingButton.style.width =
+                '100%';
+
+            existingButton.style.flex =
+                '0 0 100%';
+
+            existingButton.style.boxSizing =
+                'border-box';
+
+            existingButton.style.clear =
+                'both';
 
             return existingButton;
         }
@@ -916,6 +957,12 @@
         button.appendChild(icon);
         button.appendChild(text);
 
+        /*
+         * مهم:
+         * flex: 0 0 100%
+         * يجبر الزر يأخذ سطر كامل حتى لو
+         * حاوية منتجات الرئيسية تستخدم flex.
+         */
         button.style.display =
             'flex';
 
@@ -930,6 +977,9 @@
 
         button.style.width =
             '100%';
+
+        button.style.flex =
+            '0 0 100%';
 
         button.style.minHeight =
             '44px';
@@ -989,10 +1039,24 @@
             }
         );
 
-        productButton.insertAdjacentElement(
-            'afterend',
-            button
-        );
+        /*
+         * بدل afterend:
+         * نضع الزر داخل نفس الحاوية
+         * الموجودة حول زر سلة.
+         */
+        const parent =
+            productButton.parentElement;
+
+        if (parent) {
+            parent.appendChild(
+                button
+            );
+        } else {
+            productButton.insertAdjacentElement(
+                'afterend',
+                button
+            );
+        }
 
         return button;
     }
@@ -1039,8 +1103,8 @@
             current =
                 current.parentElement;
         }
-            }
-        async function processProduct(
+    }
+    async function processProduct(
         productButton
     ) {
         if (
@@ -1059,10 +1123,6 @@
             return;
         }
 
-        /*
-         * يمنع السباق بين أكثر من Mutation
-         * على نفس زر المنتج.
-         */
         if (
             processingProducts.has(
                 productButton
@@ -1115,9 +1175,8 @@
             }
 
             /*
-             * بيانات المنتج الأساسية:
-             * نقرأها دائمًا سواء الصفحة الرئيسية
-             * أو صفحة المنتج.
+             * بيانات المنتج الأساسية مستقلة
+             * تمامًا عن المتغيرات.
              */
             const productLink =
                 findProductLink(
@@ -1142,7 +1201,8 @@
                 );
 
             /*
-             * الاختيارات فقط في صفحة المنتج.
+             * المتغيرات إضافة اختيارية فقط
+             * في صفحة المنتج.
              */
             const selectedOptions =
                 getSelectedOptions(
@@ -1304,9 +1364,6 @@
                 for (
                     const mutation of mutations
                 ) {
-                    /*
-                     * منتج جديد ظهر في الصفحة.
-                     */
                     if (
                         mutation.type ===
                         'childList'
@@ -1325,9 +1382,6 @@
                         );
                     }
 
-                    /*
-                     * حالة المنتج تغيرت.
-                     */
                     if (
                         mutation.type ===
                         'attributes'
@@ -1388,4 +1442,4 @@
         start();
     }
 
-})();
+})();    
