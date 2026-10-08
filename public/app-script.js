@@ -1,97 +1,32 @@
 (function () {
     'use strict';
 
-    /* =========================================================
-       SALLA WHATSAPP NOTIFY
-       Product-Container Architecture
-       ========================================================= */
-
     const API_BASE =
         'https://salla-whatsapp-notify.onrender.com';
 
-    const BUTTON_CLASS =
+    const BUTTON_MARKER =
         'salla-whatsapp-notify-button';
 
-    const BUTTON_ATTR =
-        'data-salla-whatsapp-notify';
+    const OUT_OF_STOCK_STATUSES = new Set([
+        'out',
+        'out-and-notify',
+        'out-of-stock',
+        'out_of_stock',
+        'sold-out',
+        'sold_out'
+    ]);
 
-    const PROCESSED_ATTR =
-        'data-salla-whatsapp-notify-processed';
+    const DEFAULT_MESSAGE =
+        'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
 
     let merchantId = null;
     let settings = null;
     let settingsPromise = null;
 
-    /*
-     * WeakMap:
-     * يمنع معالجة نفس Product Container
-     * بشكل متكرر بدون ما نمسك العناصر في الذاكرة للأبد.
-     */
-    const productStates = new WeakMap();
-
-    /*
-     * أثناء معالجة دفعة واحدة من العناصر،
-     * نستخدم Set لمنع معالجة نفس الـ container
-     * أكثر من مرة.
-     */
-    const pendingContainers = new Set();
-
-    let processTimer = null;
-
 
     /* =========================================================
-       BASIC HELPERS
-       ========================================================= */
-
-    function cleanText(value) {
-        return String(value || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
-
-    function isElement(node) {
-        return (
-            node &&
-            node.nodeType === 1
-        );
-    }
-
-
-    function isVisible(element) {
-        if (!element) {
-            return false;
-        }
-
-        try {
-            const style =
-                window.getComputedStyle(element);
-
-            if (
-                style.display === 'none' ||
-                style.visibility === 'hidden'
-            ) {
-                return false;
-            }
-
-            if (
-                Number(style.opacity) === 0
-            ) {
-                return false;
-            }
-
-            const rect =
-                element.getBoundingClientRect();
-
-            return (
-                rect.width > 0 &&
-                rect.height > 0
-            );
-        } catch (error) {
-            return true;
-        }
-    }
-
+       SALLA CONFIG
+    ========================================================= */
 
     function getSallaConfig(key) {
         try {
@@ -116,34 +51,23 @@
 
     /* =========================================================
        MERCHANT
-       ========================================================= */
+    ========================================================= */
 
     function getMerchantId() {
         if (merchantId) {
             return merchantId;
         }
 
-        const storeId =
-            getSallaConfig('store.id');
-
-        if (storeId) {
-            merchantId =
-                String(storeId);
-
-            return merchantId;
-        }
-
-        const possibleIds = [
+        const ids = [
+            getSallaConfig('store.id'),
             getSallaConfig('store_id'),
             getSallaConfig('merchant_id'),
             getSallaConfig('merchant.id')
         ];
 
-        for (const id of possibleIds) {
-            if (id) {
-                merchantId =
-                    String(id);
-
+        for (const id of ids) {
+            if (id !== null && id !== undefined && id !== '') {
+                merchantId = String(id);
                 return merchantId;
             }
         }
@@ -171,7 +95,7 @@
 
     /* =========================================================
        SETTINGS
-       ========================================================= */
+    ========================================================= */
 
     async function loadSettings() {
         if (settings) {
@@ -199,11 +123,11 @@
                 {
                     method: 'GET',
                     headers: {
-                        'Accept': 'application/json'
+                        Accept: 'application/json'
                     }
                 }
             )
-                .then(async function (response) {
+                .then(async (response) => {
                     if (!response.ok) {
                         throw new Error(
                             `Settings request failed: ${response.status}`
@@ -212,7 +136,7 @@
 
                     return response.json();
                 })
-                .then(function (data) {
+                .then((data) => {
                     if (
                         !data ||
                         data.success !== true
@@ -232,15 +156,15 @@
                         customMessage:
                             String(
                                 data.customMessage ||
-                                'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.'
+                                DEFAULT_MESSAGE
                             ).trim()
                     };
 
                     return settings;
                 })
-                .catch(function (error) {
+                .catch((error) => {
                     console.error(
-                        'WhatsApp Notify settings error:',
+                        'WhatsApp Notify: settings error',
                         error
                     );
 
@@ -254,143 +178,213 @@
 
 
     /* =========================================================
-       URL HELPERS
-       ========================================================= */
+       PRODUCT BUTTON
+    ========================================================= */
 
-    function normalizeUrl(url) {
-        if (!url) {
-            return '';
+    function isProductButton(element) {
+        if (!element) {
+            return false;
         }
 
-        try {
-            return new URL(
-                url,
-                window.location.origin
-            ).href;
-        } catch (error) {
-            return '';
-        }
-    }
+        const tag =
+            element.tagName
+                ? element.tagName.toLowerCase()
+                : '';
 
-
-    function isBadProductLink(url) {
-        if (!url) {
-            return true;
+        if (
+            tag !== 'salla-button' &&
+            tag !== 'salla-add-product-button'
+        ) {
+            return false;
         }
 
-        const lower =
-            url.toLowerCase();
-
-        const badParts = [
-            '/cart',
-            '/checkout',
-            '/login',
-            '/register',
-            '/wishlist',
-            'javascript:',
-            '#'
-        ];
-
-        return badParts.some(function (part) {
-            return lower.includes(part);
-        });
-    }
-
-
-    /* =========================================================
-       PRODUCT LINK
-       ========================================================= */
-
-    function getProductLink(container) {
-        if (!container) {
-            return '';
-        }
-
-        const links =
-            container.querySelectorAll(
-                'a[href]'
+        const productType =
+            element.getAttribute(
+                'product-type'
             );
 
-        let bestLink = '';
-
-        for (const link of links) {
-            if (!isVisible(link)) {
-                continue;
-            }
-
-            const href =
-                normalizeUrl(
-                    link.getAttribute('href')
-                );
-
-            if (
-                !href ||
-                isBadProductLink(href)
-            ) {
-                continue;
-            }
-
-            /*
-             * نفضل الرابط الذي يحتوي على:
-             * صورة أو عنوان المنتج.
-             */
-            const hasImage =
-                !!link.querySelector('img');
-
-            const text =
-                cleanText(
-                    link.textContent
-                );
-
-            const hasText =
-                text.length >= 2;
-
-            if (
-                hasImage ||
-                hasText
-            ) {
-                return href;
-            }
-
-            if (!bestLink) {
-                bestLink = href;
-            }
+        if (
+            productType &&
+            productType !== 'product'
+        ) {
+            return false;
         }
 
-        return bestLink;
+        return Boolean(
+            getProductId(element)
+        );
     }
 
 
-    /* =========================================================
-       PRODUCT ID
-       ========================================================= */
-
-    function getProductId(container) {
-        if (!container) {
+    function getProductId(element) {
+        if (!element) {
             return '';
         }
 
         const attributes = [
-            'data-product-id',
-            'data-id',
             'product-id',
-            'data-product'
+            'data-product-id'
         ];
 
-        let current =
-            container;
+        for (const attribute of attributes) {
+            const value =
+                element.getAttribute(attribute);
 
-        for (let level = 0; level < 5; level++) {
-            if (!current) {
-                break;
+            if (value) {
+                return String(value).trim();
             }
+        }
 
-            for (const attr of attributes) {
-                const value =
-                    current.getAttribute(attr);
+        try {
+            if (
+                element.productId !== undefined &&
+                element.productId !== null
+            ) {
+                return String(
+                    element.productId
+                ).trim();
+            }
+        } catch (error) {}
 
-                if (value) {
-                    return String(value).trim();
+        return '';
+    }
+
+
+    function getProductStatus(element) {
+        if (!element) {
+            return '';
+        }
+
+        const attributes = [
+            'product-status',
+            'data-product-status',
+            'status'
+        ];
+
+        for (const attribute of attributes) {
+            const value =
+                element.getAttribute(attribute);
+
+            if (value) {
+                return String(value)
+                    .trim()
+                    .toLowerCase();
+            }
+        }
+
+        try {
+            if (
+                typeof element.productStatus ===
+                'string'
+            ) {
+                return element.productStatus
+                    .trim()
+                    .toLowerCase();
+            }
+        } catch (error) {}
+
+        return '';
+    }
+
+
+    /* =========================================================
+       PRODUCT URL
+    ========================================================= */
+
+    function isProductUrl(href, productId) {
+        if (!href || !productId) {
+            return false;
+        }
+
+        try {
+            const url =
+                new URL(
+                    href,
+                    window.location.href
+                );
+
+            return url.pathname.includes(
+                `/p${productId}`
+            );
+        } catch (error) {
+            return String(href).includes(
+                `/p${productId}`
+            );
+        }
+    }
+
+
+    function normalizeUrl(href) {
+        try {
+            return new URL(
+                href,
+                window.location.href
+            ).href;
+        } catch (error) {
+            return String(href || '');
+        }
+    }
+
+
+    /* =========================================================
+       PRODUCT CONTEXT
+    ========================================================= */
+
+    function findProductContext(
+        productButton,
+        productId
+    ) {
+        let current =
+            productButton;
+
+        for (
+            let level = 0;
+            current &&
+            level < 14;
+            level++
+        ) {
+            const links =
+                Array.from(
+                    current.querySelectorAll(
+                        'a[href]'
+                    )
+                ).filter((link) => {
+                    return isProductUrl(
+                        link.getAttribute('href'),
+                        productId
+                    );
+                });
+
+            if (links.length) {
+                const productButtons =
+                    Array.from(
+                        current.querySelectorAll(
+                            'salla-button[product-id], salla-button[data-product-id], salla-add-product-button[product-id], salla-add-product-button[data-product-id]'
+                        )
+                    ).filter((button) => {
+                        return (
+                            getProductId(button) ===
+                            productId
+                        );
+                    });
+
+                if (
+                    productButtons.length === 1
+                ) {
+                    const namedLink =
+                        links.find((link) => {
+                            return (
+                                link.textContent &&
+                                link.textContent.trim()
+                            );
+                        });
+
+                    return {
+                        container: current,
+                        link:
+                            namedLink ||
+                            links[0]
+                    };
                 }
             }
 
@@ -398,899 +392,174 @@
                 current.parentElement;
         }
 
-        return '';
-    }
-
-
-    /* =========================================================
-       TEXT SIGNALS
-       ========================================================= */
-
-    function containsOutOfStockText(text) {
-        const value =
-            cleanText(text)
-                .toLowerCase();
-
-        if (!value) {
-            return false;
-        }
-
-        const phrases = [
-            'نفد المخزون',
-            'نفد',
-            'نفذت الكمية',
-            'نفذت',
-            'غير متوفر',
-            'غير متاحة',
-            'غير متاح',
-            'غير متوفر حالياً',
-            'غير متوفر حاليًا',
-            'غير متاحة حالياً',
-            'غير متاحة حاليًا',
-            'sold out',
-            'out of stock',
-            'unavailable',
-            'not available',
-            'currently unavailable'
-        ];
-
-        return phrases.some(function (phrase) {
-            return value.includes(phrase);
-        });
-    }
-
-
-    function containsInStockText(text) {
-        const value =
-            cleanText(text)
-                .toLowerCase();
-
-        if (!value) {
-            return false;
-        }
-
-        const phrases = [
-            'متوفر',
-            'متاحة',
-            'متاح',
-            'متوفر الآن',
-            'متوفر حالياً',
-            'متوفر حاليًا',
-            'in stock',
-            'available'
-        ];
-
-        return phrases.some(function (phrase) {
-            return value.includes(phrase);
-        });
-    }
-
-
-    /* =========================================================
-       ATTRIBUTE AVAILABILITY
-       ========================================================= */
-
-    function parseAvailabilityValue(value) {
         if (
-            value === null ||
-            value === undefined
-        ) {
-            return null;
-        }
-
-        const normalized =
-            String(value)
-                .trim()
-                .toLowerCase();
-
-        if (!normalized) {
-            return null;
-        }
-
-        /*
-         * Numeric stock
-         */
-        if (
-            /^-?\d+(\.\d+)?$/.test(
-                normalized
+            isProductUrl(
+                window.location.href,
+                productId
             )
         ) {
-            const number =
-                Number(normalized);
-
-            if (number <= 0) {
-                return 'out';
-            }
-
-            return 'in';
-        }
-
-        const outValues = [
-            'false',
-            'no',
-            'off',
-            'out',
-            'out-of-stock',
-            'out_of_stock',
-            'sold-out',
-            'sold_out',
-            'unavailable',
-            'not-available',
-            'not_available'
-        ];
-
-        if (
-            outValues.includes(normalized)
-        ) {
-            return 'out';
-        }
-
-        const inValues = [
-            'true',
-            'yes',
-            'on',
-            'in',
-            'available',
-            'in-stock',
-            'in_stock'
-        ];
-
-        if (
-            inValues.includes(normalized)
-        ) {
-            return 'in';
-        }
-
-        return null;
-    }
-
-
-    function readAvailabilityAttributes(element) {
-        if (!element) {
-            return null;
-        }
-
-        const attributes = [
-            'data-available',
-            'data-in-stock',
-            'data-stock',
-            'data-quantity',
-            'data-product-status',
-            'product-status',
-            'data-stock-status',
-            'stock-status',
-            'data-availability',
-            'availability'
-        ];
-
-        for (const attribute of attributes) {
-            const value =
-                element.getAttribute(
-                    attribute
-                );
-
-            const result =
-                parseAvailabilityValue(value);
-
-            if (result) {
-                return result;
-            }
-        }
-
-        return null;
-    }
-        /* =========================================================
-       COMPONENT STATUS
-       ========================================================= */
-
-    function readComponentStatus(element) {
-        if (!element) {
-            return null;
-        }
-
-        const attributes = [
-            'product-status',
-            'status',
-            'data-product-status'
-        ];
-
-        for (const attribute of attributes) {
-            const value =
-                element.getAttribute(
-                    attribute
-                );
-
-            const result =
-                parseAvailabilityValue(value);
-
-            if (result) {
-                return result;
-            }
-        }
-
-        /*
-         * Salla Web Component properties
-         */
-        const properties = [
-            'productStatus',
-            'status',
-            'available',
-            'inStock',
-            'stock',
-            'quantity'
-        ];
-
-        for (const property of properties) {
-            try {
-                const value =
-                    element[property];
-
-                if (
-                    typeof value === 'number'
-                ) {
-                    return value <= 0
-                        ? 'out'
-                        : 'in';
-                }
-
-                const result =
-                    parseAvailabilityValue(
-                        value
-                    );
-
-                if (result) {
-                    return result;
-                }
-            } catch (error) {}
-        }
-
-        return null;
-    }
-
-
-    /* =========================================================
-       PURCHASE CONTROL
-       ========================================================= */
-
-    function isPurchaseControl(element) {
-        if (!element) {
-            return false;
-        }
-
-        if (
-            element.matches(
-                'salla-add-product-button'
-            )
-        ) {
-            return true;
-        }
-
-        if (
-            element.matches(
-                'button[type="submit"]'
-            )
-        ) {
-            return true;
-        }
-
-        const className =
-            String(
-                element.className || ''
-            ).toLowerCase();
-
-        const attributes = [
-            'add-to-cart',
-            'add-to-basket',
-            'add-cart',
-            'cart-button',
-            'purchase'
-        ];
-
-        return attributes.some(function (part) {
-            return className.includes(part);
-        });
-    }
-
-
-    function getPurchaseControls(container) {
-        if (!container) {
-            return [];
-        }
-
-        const result = [];
-
-        if (
-            isPurchaseControl(container)
-        ) {
-            result.push(container);
-        }
-
-        const elements =
-            container.querySelectorAll(
-                'salla-add-product-button,' +
-                'button[type="submit"],' +
-                'button,' +
-                '[role="button"],' +
-                'a[role="button"]'
-            );
-
-        for (const element of elements) {
-            if (
-                isPurchaseControl(element)
-            ) {
-                result.push(element);
-            }
-        }
-
-        /*
-         * إزالة التكرار
-         */
-        return Array.from(
-            new Set(result)
-        );
-    }
-
-
-    /* =========================================================
-       STOCK DETECTION
-       ========================================================= */
-
-    function detectStock(container) {
-        if (!container) {
             return {
-                state: 'unknown',
-                confidence: 0
+                container:
+                    productButton.parentElement ||
+                    productButton,
+
+                link: null
             };
         }
 
-        /*
-         * =====================================================
-         * LEVEL 1
-         * Explicit stock / availability attributes
-         * =====================================================
-         */
-
-        const nodes = [
-            container,
-            ...getPurchaseControls(container)
-        ];
-
-        for (const node of nodes) {
-            const result =
-                readAvailabilityAttributes(node);
-
-            if (result === 'out') {
-                return {
-                    state: 'out',
-                    confidence: 100
-                };
-            }
-
-            if (result === 'in') {
-                return {
-                    state: 'in',
-                    confidence: 100
-                };
-            }
-        }
-
-
-        /*
-         * =====================================================
-         * LEVEL 2
-         * Salla component status
-         * =====================================================
-         */
-
-        for (const node of nodes) {
-            const result =
-                readComponentStatus(node);
-
-            if (result === 'out') {
-                return {
-                    state: 'out',
-                    confidence: 95
-                };
-            }
-
-            if (result === 'in') {
-                return {
-                    state: 'in',
-                    confidence: 95
-                };
-            }
-        }
-
-
-        /*
-         * =====================================================
-         * LEVEL 3
-         * Official Salla availability component
-         *
-         * مهم:
-         * مجرد وجود component لا يعني نفاد المنتج.
-         * لازم يكون داخله signal حقيقي.
-         * =====================================================
-         */
-
-        const availability =
-            container.querySelector(
-                'salla-product-availability'
-            );
-
-        if (availability) {
-            const attributeResult =
-                readAvailabilityAttributes(
-                    availability
-                );
-
-            if (
-                attributeResult === 'out'
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 90
-                };
-            }
-
-            if (
-                attributeResult === 'in'
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 90
-                };
-            }
-
-            const componentResult =
-                readComponentStatus(
-                    availability
-                );
-
-            if (
-                componentResult === 'out'
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 90
-                };
-            }
-
-            if (
-                componentResult === 'in'
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 90
-                };
-            }
-
-            const availabilityText =
-                cleanText(
-                    availability.textContent
-                );
-
-            if (
-                containsOutOfStockText(
-                    availabilityText
-                )
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 85
-                };
-            }
-
-            if (
-                containsInStockText(
-                    availabilityText
-                )
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 85
-                };
-            }
-        }
-
-
-        /*
-         * =====================================================
-         * LEVEL 4
-         * Purchase button state + text
-         *
-         * disabled لوحده مش كفاية.
-         * =====================================================
-         */
-
-        const purchaseControls =
-            getPurchaseControls(
-                container
-            );
-
-        for (const button of purchaseControls) {
-            const text =
-                cleanText(
-                    [
-                        button.textContent,
-                        button.getAttribute('aria-label'),
-                        button.getAttribute('title'),
-                        button.getAttribute('value')
-                    ]
-                        .filter(Boolean)
-                        .join(' ')
-                );
-
-            const disabled =
-                button.hasAttribute('disabled') ||
-                button.disabled === true ||
-                button.getAttribute(
-                    'aria-disabled'
-                ) === 'true';
-
-            if (
-                disabled &&
-                containsOutOfStockText(text)
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 80
-                };
-            }
-
-            if (
-                containsInStockText(text) &&
-                !disabled
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 75
-                };
-            }
-        }
-
-
-        /*
-         * =====================================================
-         * LEVEL 5
-         * Generic stock / availability elements
-         * =====================================================
-         */
-
-        const stockElements =
-            container.querySelectorAll(
-                '[class*="stock"],' +
-                '[class*="availability"],' +
-                '[data-stock-status],' +
-                '[data-availability]'
-            );
-
-        for (const element of stockElements) {
-            const attributeResult =
-                readAvailabilityAttributes(
-                    element
-                );
-
-            if (
-                attributeResult === 'out'
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 75
-                };
-            }
-
-            if (
-                attributeResult === 'in'
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 75
-                };
-            }
-
-            const text =
-                cleanText(
-                    element.textContent
-                );
-
-            if (
-                containsOutOfStockText(text)
-            ) {
-                return {
-                    state: 'out',
-                    confidence: 65
-                };
-            }
-
-            if (
-                containsInStockText(text)
-            ) {
-                return {
-                    state: 'in',
-                    confidence: 65
-                };
-            }
-        }
-
-
-        /*
-         * =====================================================
-         * UNKNOWN
-         *
-         * لو مفيش أي signal موثوق:
-         * لا نظهر الزر.
-         *
-         * ده مهم جدًا لمنع false positives.
-         * =====================================================
-         */
-
         return {
-            state: 'unknown',
-            confidence: 0
+            container:
+                productButton.parentElement ||
+                productButton,
+
+            link: null
         };
     }
 
 
     /* =========================================================
        PRODUCT NAME
-       ========================================================= */
+    ========================================================= */
 
-    function getProductName(container) {
-        if (!container) {
-            return '';
-        }
+    function getProductName(
+        productButton,
+        context,
+        productId
+    ) {
+        if (
+            context &&
+            context.link
+        ) {
+            const linkText =
+                context.link.textContent
+                    .trim()
+                    .replace(/\s+/g, ' ');
 
-        /*
-         * Product-specific attributes
-         */
-        const attributes = [
-            'data-product-title',
-            'data-title',
-            'product-title'
-        ];
-
-        for (const attribute of attributes) {
-            const element =
-                container.querySelector(
-                    `[${attribute}]`
-                );
-
-            if (element) {
-                const text =
-                    cleanText(
-                        element.getAttribute(
-                            attribute
-                        ) ||
-                        element.textContent
-                    );
-
-                if (text) {
-                    return text;
-                }
-            }
-        }
-
-
-        /*
-         * Product title classes
-         */
-        const titleSelectors = [
-            '[class*="product-title"]',
-            '[class*="product-name"]',
-            '[class*="product_name"]'
-        ];
-
-        for (const selector of titleSelectors) {
-            const elements =
-                container.querySelectorAll(
-                    selector
-                );
-
-            for (const element of elements) {
-                if (!isVisible(element)) {
-                    continue;
-                }
-
-                const text =
-                    cleanText(
-                        element.textContent
-                    );
-
-                if (
-                    text &&
-                    text.length >= 2
-                ) {
-                    return text;
-                }
-            }
-        }
-
-
-        /*
-         * Headings
-         */
-        const headings =
-            container.querySelectorAll(
-                'h1, h2, h3, h4'
-            );
-
-        for (const element of headings) {
-            if (!isVisible(element)) {
-                continue;
-            }
-
-            const text =
-                cleanText(
-                    element.textContent
-                );
-
-            if (
-                text &&
-                text.length >= 2 &&
-                !containsOutOfStockText(text)
-            ) {
-                return text;
-            }
-        }
-
-
-        /*
-         * Salla product page fallback
-         */
-        const pageTitle =
-            getSallaConfig('page.title');
-
-        if (pageTitle) {
-            return cleanText(
-                pageTitle
-            );
-        }
-
-
-        /*
-         * Document title fallback
-         */
-        return cleanText(
-            document.title
-                .replace(/\s*[|—-]\s*.*$/, '')
-        ) || 'هذا المنتج';
-                }
-        /* =========================================================
-       PRODUCT PRICE
-       ========================================================= */
-
-    function isOldPrice(element) {
-        if (!element) {
-            return false;
-        }
-
-        const className =
-            String(
-                element.className || ''
-            ).toLowerCase();
-
-        const attributes =
-            [
-                'old',
-                'compare',
-                'original',
-                'before',
-                'was',
-                'previous',
-                'discount-old'
-            ];
-
-        for (const word of attributes) {
-            if (
-                className.includes(word)
-            ) {
-                return true;
+            if (linkText) {
+                return linkText;
             }
         }
 
         if (
-            element.matches('del, s')
+            isProductUrl(
+                window.location.href,
+                productId
+            )
         ) {
-            return true;
-        }
+            const pageTitle =
+                getSallaConfig('page.title');
 
-        try {
-            const style =
-                window.getComputedStyle(
-                    element
+            if (pageTitle) {
+                return String(pageTitle)
+                    .trim();
+            }
+
+            const heading =
+                document.querySelector(
+                    'h1'
                 );
 
             if (
-                style.textDecorationLine &&
-                style.textDecorationLine
-                    .includes('line-through')
+                heading &&
+                heading.textContent.trim()
             ) {
-                return true;
+                return heading.textContent
+                    .trim()
+                    .replace(/\s+/g, ' ');
             }
-        } catch (error) {}
+        }
 
-        return false;
+        const container =
+            context?.container;
+
+        if (container) {
+            const selectors = [
+                '[data-product-title]',
+                '.product-title',
+                '.product-name'
+            ];
+
+            for (const selector of selectors) {
+                const element =
+                    container.querySelector(
+                        selector
+                    );
+
+                if (
+                    element &&
+                    element.textContent.trim()
+                ) {
+                    return element.textContent
+                        .trim()
+                        .replace(/\s+/g, ' ');
+                }
+            }
+        }
+
+        return 'هذا المنتج';
     }
 
 
-    function getProductPrice(container) {
+    /* =========================================================
+       PRODUCT PRICE
+    ========================================================= */
+
+    function getProductPrice(
+        productButton,
+        context
+    ) {
+        const amount =
+            productButton.getAttribute(
+                'amount'
+            );
+
+        if (
+            amount !== null &&
+            amount.trim() !== ''
+        ) {
+            return amount.trim();
+        }
+
+        const container =
+            context?.container;
+
         if (!container) {
             return '';
         }
 
-        /*
-         * Product page official value
-         */
-        const pagePrice =
-            getSallaConfig('page.price');
-
-        /*
-         * data-product-price
-         * أقوى مصدر داخل الـ Card
-         */
-        const dataPrices =
-            container.querySelectorAll(
-                '[data-product-price]'
-            );
-
-        for (const element of dataPrices) {
-            if (
-                !isVisible(element) ||
-                isOldPrice(element)
-            ) {
-                continue;
-            }
-
-            const attributeValue =
-                element.getAttribute(
-                    'data-product-price'
-                );
-
-            const text =
-                cleanText(
-                    attributeValue ||
-                    element.textContent
-                );
-
-            if (
-                text &&
-                /\d/.test(text)
-            ) {
-                return text;
-            }
-        }
-
-
-        /*
-         * Price selectors
-         */
         const selectors = [
-            '[class*="product-price"]',
-            '[class*="current-price"]',
-            '[class*="sale-price"]',
+            '[data-product-price]',
             'salla-price',
-            '[class*="price"]'
+            '.sale-price',
+            '.current-price',
+            '.product-price',
+            '[class*="sale-price"]',
+            '[class*="current-price"]',
+            '[class*="product-price"]'
         ];
 
         for (const selector of selectors) {
             const elements =
-                container.querySelectorAll(
-                    selector
+                Array.from(
+                    container.querySelectorAll(
+                        selector
+                    )
                 );
 
             for (const element of elements) {
-                if (
-                    !isVisible(element) ||
-                    isOldPrice(element)
-                ) {
+                const hasNestedPrice =
+                    element.querySelector(
+                        '[data-product-price], salla-price, .sale-price, .current-price, .product-price'
+                    );
+
+                if (hasNestedPrice) {
                     continue;
                 }
 
                 const text =
-                    cleanText(
-                        element.textContent
-                    );
+                    element.textContent
+                        .trim()
+                        .replace(/\s+/g, ' ');
 
                 if (
                     text &&
@@ -1301,14 +570,34 @@
             }
         }
 
+        return '';
+    }
+        /* =========================================================
+       PRODUCT URL
+    ========================================================= */
 
-        /*
-         * Product page fallback
-         */
-        if (pagePrice) {
-            return cleanText(
-                pagePrice
+    function getProductUrl(
+        context,
+        productId
+    ) {
+        if (
+            context &&
+            context.link
+        ) {
+            return normalizeUrl(
+                context.link.getAttribute(
+                    'href'
+                )
             );
+        }
+
+        if (
+            isProductUrl(
+                window.location.href,
+                productId
+            )
+        ) {
+            return window.location.href;
         }
 
         return '';
@@ -1316,374 +605,65 @@
 
 
     /* =========================================================
-       PRODUCT URL
-       ========================================================= */
+       STOCK
+    ========================================================= */
 
-    function getProductUrl(container) {
-        const link =
-            getProductLink(
-                container
+    function isOutOfStock(
+        productButton
+    ) {
+        const status =
+            getProductStatus(
+                productButton
             );
 
-        if (link) {
-            return link;
+        if (
+            OUT_OF_STOCK_STATUSES.has(
+                status
+            )
+        ) {
+            return true;
         }
 
-        /*
-         * لو ده Product Detail Page
-         */
-        return window.location.href;
-    }
-
-
-    /* =========================================================
-       FIND PRODUCT CONTAINER
-       ========================================================= */
-
-    function countPurchaseControls(node) {
-        if (!node) {
-            return 0;
-        }
-
-        return getPurchaseControls(node).length;
-    }
-
-
-    function countUsefulProductLinks(node) {
-        if (!node) {
-            return 0;
-        }
-
-        const links =
-            node.querySelectorAll(
-                'a[href]'
-            );
-
-        let count = 0;
-        const seen = new Set();
-
-        for (const link of links) {
-            const href =
-                normalizeUrl(
-                    link.getAttribute('href')
-                );
-
-            if (
-                !href ||
-                isBadProductLink(href) ||
-                seen.has(href)
-            ) {
-                continue;
-            }
-
-            seen.add(href);
-
-            const hasImage =
-                !!link.querySelector('img');
-
-            const text =
-                cleanText(
-                    link.textContent
-                );
-
-            if (
-                hasImage ||
-                text.length >= 2
-            ) {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-
-    function hasProductInformation(node) {
-        if (!node) {
+        if (status) {
             return false;
         }
 
-        const hasTitle =
-            !!node.querySelector(
-                'h1, h2, h3, h4,' +
-                '[class*="product-title"],' +
-                '[class*="product-name"]'
-            );
+        const disabled =
+            productButton.hasAttribute(
+                'disabled'
+            ) ||
+            productButton.getAttribute(
+                'aria-disabled'
+            ) === 'true';
 
-        const hasPrice =
-            !!node.querySelector(
-                '[data-product-price],' +
-                '[class*="price"],' +
-                'salla-price'
-            );
+        if (!disabled) {
+            return false;
+        }
 
-        const hasImage =
-            !!node.querySelector(
-                'img'
-            );
+        const text =
+            (
+                productButton.textContent ||
+                ''
+            )
+                .trim()
+                .toLowerCase();
 
         return (
-            hasTitle ||
-            hasPrice ||
-            hasImage
+            text.includes('نفد') ||
+            text.includes('نفذت') ||
+            text.includes('غير متوفر') ||
+            text.includes('sold out') ||
+            text.includes('out of stock') ||
+            text.includes('unavailable')
         );
     }
 
 
-    function scoreContainer(
-        node,
-        sourceElement
-    ) {
-        if (!node || node === document.body) {
-            return -999;
-        }
-
-        const tag =
-            node.tagName.toLowerCase();
-
-        if (
-            tag === 'html' ||
-            tag === 'body' ||
-            tag === 'main'
-        ) {
-            return -999;
-        }
-
-        const purchaseCount =
-            countPurchaseControls(node);
-
-        const linkCount =
-            countUsefulProductLinks(node);
-
-        const hasInfo =
-            hasProductInformation(node);
-
-        const className =
-            String(
-                node.className || ''
-            ).toLowerCase();
-
-        const productHint =
-            className.includes('product') ||
-            className.includes('card') ||
-            className.includes('item') ||
-            className.includes('catalog');
-
-        let score = 0;
-
-        /*
-         * عنصر شراء واحد = علامة قوية جدًا
-         */
-        if (purchaseCount === 1) {
-            score += 8;
-        }
-
-        /*
-         * أكثر من زر شراء داخل نفس العنصر
-         * غالبًا معناه إننا طلعنا للـ parent زيادة.
-         */
-        if (purchaseCount > 1) {
-            score -= 8;
-        }
-
-        /*
-         * رابط منتج واحد ممتاز للـ Cards.
-         */
-        if (linkCount === 1) {
-            score += 7;
-        }
-
-        if (linkCount > 1) {
-            score -= Math.min(
-                linkCount - 1,
-                5
-            );
-        }
-
-        if (hasInfo) {
-            score += 4;
-        }
-
-        if (productHint) {
-            score += 3;
-        }
-
-        if (
-            tag === 'article' ||
-            tag === 'li'
-        ) {
-            score += 3;
-        }
-
-        /*
-         * وجود صورة مع عنصر صغير
-         */
-        if (
-            node.querySelector('img')
-        ) {
-            score += 1;
-        }
-
-        /*
-         * لو المصدر نفسه زر شراء
-         */
-        if (
-            sourceElement &&
-            isPurchaseControl(sourceElement)
-        ) {
-            score += 2;
-        }
-
-        return score;
-    }
-
-
-    function findProductContainer(sourceElement) {
-        if (!sourceElement) {
-            return null;
-        }
-
-        /*
-         * لو العنصر نفسه مناسب
-         */
-        let bestNode = null;
-        let bestScore = -999;
-
-        let current =
-            sourceElement;
-
-        /*
-         * نصعد عدد محدود من المستويات.
-         *
-         * الهدف:
-         * أصغر Container يحتوي المنتج
-         * وليس الـ grid كله.
-         */
-        for (let level = 0; level < 10; level++) {
-            if (!current) {
-                break;
-            }
-
-            const score =
-                scoreContainer(
-                    current,
-                    sourceElement
-                );
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestNode = current;
-            }
-
-            /*
-             * بمجرد ما نلاقي Container قوي جدًا
-             * وفيه زر شراء واحد + معلومات المنتج،
-             * نوقف.
-             */
-            if (
-                score >= 17 &&
-                countPurchaseControls(current) === 1
-            ) {
-                bestNode = current;
-                break;
-            }
-
-            current =
-                current.parentElement;
-        }
-
-        /*
-         * لازم يكون عندنا على الأقل
-         * product information أو purchase control.
-         */
-        if (!bestNode) {
-            return null;
-        }
-
-        const hasPurchase =
-            countPurchaseControls(
-                bestNode
-            ) > 0;
-
-        const hasInfo =
-            hasProductInformation(
-                bestNode
-            );
-
-        if (
-            !hasPurchase &&
-            !hasInfo
-        ) {
-            return null;
-        }
-
-        return bestNode;
-    }
-
-
     /* =========================================================
-       FIND INSERTION TARGET
-       ========================================================= */
+       WHATSAPP URL
+    ========================================================= */
 
-    function findInsertionTarget(container) {
-        if (!container) {
-            return null;
-        }
-
-        const controls =
-            getPurchaseControls(
-                container
-            );
-
-        /*
-         * الأولوية لزر الشراء الحقيقي.
-         */
-        for (const control of controls) {
-            if (
-                isVisible(control)
-            ) {
-                return control;
-            }
-        }
-
-        /*
-         * fallback:
-         * stock / availability element
-         */
-        const stockElement =
-            container.querySelector(
-                'salla-product-availability,' +
-                '[class*="stock"],' +
-                '[class*="availability"]'
-            );
-
-        if (stockElement) {
-            return stockElement;
-        }
-
-        return null;
-                }
-        /* =========================================================
-       BUTTON
-       ========================================================= */
-
-    function removeNotifyButton(container) {
-        if (!container) {
-            return;
-        }
-
-        const buttons =
-            container.querySelectorAll(
-                `.${BUTTON_CLASS}`
-            );
-
-        for (const button of buttons) {
-            button.remove();
-        }
-    }
-
-
-    function createWhatsAppUrl(
+    function buildWhatsAppUrl(
         productName,
         productPrice,
         productUrl
@@ -1692,7 +672,7 @@
             !settings ||
             !settings.whatsappNumber
         ) {
-            return null;
+            return '';
         }
 
         const number =
@@ -1700,15 +680,15 @@
                 .replace(/\D/g, '');
 
         if (!number) {
-            return null;
+            return '';
         }
 
         let message =
             settings.customMessage ||
-            'هلا، ياليت تبلغوني أول ما يتوفر هذا المنتج.';
+            DEFAULT_MESSAGE;
 
         message +=
-            `\n\nالمنتج: ${productName || 'هذا المنتج'}`;
+            `\n\nالمنتج: ${productName}`;
 
         if (productPrice) {
             message +=
@@ -1721,61 +701,50 @@
         }
 
         return (
-            'https://wa.me/' +
-            number +
-            '?text=' +
+            `https://wa.me/${number}?text=` +
             encodeURIComponent(message)
         );
     }
 
 
-    function createNotifyButton(
-        container,
-        target,
-        productName,
-        productPrice,
-        productUrl
+    /* =========================================================
+       WHATSAPP BUTTON
+    ========================================================= */
+
+    function createWhatsAppButton(
+        productButton,
+        productId,
+        whatsappUrl
     ) {
-        if (
-            !container ||
-            !target
-        ) {
-            return;
-        }
-
-        /*
-         * منع التكرار بشكل مباشر.
-         */
-        const existing =
-            container.querySelector(
-                `.${BUTTON_CLASS}`
-            );
-
-        if (existing) {
-            return;
-        }
-
-        const whatsappUrl =
-            createWhatsAppUrl(
-                productName,
-                productPrice,
-                productUrl
-            );
-
         if (!whatsappUrl) {
-            return;
+            return null;
+        }
+
+        const next =
+            productButton.nextElementSibling;
+
+        if (
+            next &&
+            next.getAttribute(
+                'data-salla-whatsapp-product'
+            ) === productId
+        ) {
+            next.href =
+                whatsappUrl;
+
+            return next;
         }
 
         const button =
             document.createElement('a');
 
-        button.className =
-            BUTTON_CLASS;
-
         button.setAttribute(
-            BUTTON_ATTR,
-            'true'
+            'data-salla-whatsapp-product',
+            productId
         );
+
+        button.className =
+            BUTTON_MARKER;
 
         button.href =
             whatsappUrl;
@@ -1786,33 +755,27 @@
         button.rel =
             'noopener noreferrer';
 
-        button.setAttribute(
-            'aria-label',
-            'أبلغني عبر واتساب عند توفر المنتج'
-        );
-
         button.textContent =
             '🔔 أبلغني عبر واتساب عند توفر المنتج';
 
         button.style.cssText = `
-            display:block;
-            width:100%;
-            margin-top:10px;
-            padding:12px 14px;
-            background:#25D366;
-            color:#ffffff;
-            border:0;
-            border-radius:10px;
-            text-align:center;
-            text-decoration:none;
-            font-family:inherit;
-            font-size:14px;
-            font-weight:700;
-            line-height:1.5;
-            box-sizing:border-box;
-            cursor:pointer;
-            transition:opacity .18s ease;
-            direction:rtl;
+            display: block;
+            width: 100%;
+            margin-top: 10px;
+            padding: 13px 16px;
+            box-sizing: border-box;
+            border: 0;
+            border-radius: 10px;
+            background: #25D366;
+            color: #ffffff;
+            text-align: center;
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1.5;
+            cursor: pointer;
+            transition: opacity .18s ease, transform .18s ease;
         `;
 
         button.addEventListener(
@@ -1820,6 +783,9 @@
             function () {
                 button.style.opacity =
                     '0.88';
+
+                button.style.transform =
+                    'translateY(-1px)';
             }
         );
 
@@ -1828,379 +794,194 @@
             function () {
                 button.style.opacity =
                     '1';
+
+                button.style.transform =
+                    'translateY(0)';
             }
         );
 
-        /*
-         * نضيفه بعد زر الشراء
-         * أو بعد عنصر availability.
-         */
-        target.insertAdjacentElement(
+        productButton.insertAdjacentElement(
             'afterend',
             button
         );
+
+        return button;
+    }
+
+
+    function removeWhatsAppButton(
+        productButton,
+        productId
+    ) {
+        const next =
+            productButton.nextElementSibling;
+
+        if (
+            next &&
+            next.getAttribute(
+                'data-salla-whatsapp-product'
+            ) === productId
+        ) {
+            next.remove();
+        }
     }
 
 
     /* =========================================================
        PROCESS ONE PRODUCT
-       ========================================================= */
+    ========================================================= */
 
     async function processProduct(
-        container
+        productButton
     ) {
-        if (!container) {
-            return;
-        }
-
-        /*
-         * منع أي processing لو العنصر
-         * اتشال من الصفحة.
-         */
         if (
-            !container.isConnected
-        ) {
-            return;
-        }
-
-        /*
-         * لا نعالج زرنا نفسه.
-         */
-        if (
-            container.matches(
-                `.${BUTTON_CLASS}`
+            !isProductButton(
+                productButton
             )
         ) {
             return;
         }
 
-        const stock =
-            detectStock(
-                container
+        const productId =
+            getProductId(
+                productButton
             );
 
-        /*
-         * المنتج متاح أو غير معروف:
-         * لا نظهر زر WhatsApp.
-         */
+        if (!productId) {
+            return;
+        }
+
         if (
-            stock.state !== 'out'
+            !isOutOfStock(
+                productButton
+            )
         ) {
-            removeNotifyButton(
-                container
-            );
-
-            productStates.set(
-                container,
-                {
-                    state: stock.state,
-                    confidence: stock.confidence,
-                    button: null
-                }
+            removeWhatsAppButton(
+                productButton,
+                productId
             );
 
             return;
         }
 
-        /*
-         * لو الزر موجود بالفعل:
-         * انتهينا.
-         */
-        const existing =
-            container.querySelector(
-                `.${BUTTON_CLASS}`
-            );
-
-        if (existing) {
-            productStates.set(
-                container,
-                {
-                    state: 'out',
-                    confidence: stock.confidence,
-                    button: existing
-                }
-            );
-
-            return;
-        }
-
-        /*
-         * تحميل settings مرة واحدة فقط.
-         */
-        const loaded =
+        const loadedSettings =
             await loadSettings();
 
-        if (!loaded) {
-            return;
-        }
-
-        /*
-         * نعيد التأكد بعد تحميل settings،
-         * لأن DOM ممكن يكون اتغير أثناء الانتظار.
-         */
         if (
-            !container.isConnected
+            !loadedSettings ||
+            !loadedSettings.whatsappNumber
         ) {
             return;
         }
 
-        const currentStock =
-            detectStock(
-                container
+        const context =
+            findProductContext(
+                productButton,
+                productId
             );
-
-        if (
-            currentStock.state !== 'out'
-        ) {
-            return;
-        }
-
-        /*
-         * حماية ثانية ضد التكرار.
-         */
-        if (
-            container.querySelector(
-                `.${BUTTON_CLASS}`
-            )
-        ) {
-            return;
-        }
-
-        const target =
-            findInsertionTarget(
-                container
-            );
-
-        if (!target) {
-            return;
-        }
 
         const productName =
             getProductName(
-                container
+                productButton,
+                context,
+                productId
             );
 
         const productPrice =
             getProductPrice(
-                container
+                productButton,
+                context
             );
 
         const productUrl =
             getProductUrl(
-                container
+                context,
+                productId
             );
 
-        createNotifyButton(
-            container,
-            target,
-            productName,
-            productPrice,
-            productUrl
+        const whatsappUrl =
+            buildWhatsAppUrl(
+                productName,
+                productPrice,
+                productUrl
+            );
+
+        if (!whatsappUrl) {
+            return;
+        }
+
+        createWhatsAppButton(
+            productButton,
+            productId,
+            whatsappUrl
         );
-
-        const button =
-            container.querySelector(
-                `.${BUTTON_CLASS}`
-            );
-
-        productStates.set(
-            container,
-            {
-                state: 'out',
-                confidence:
-                    currentStock.confidence,
-                button:
-                    button || null,
-                productId:
-                    getProductId(
-                        container
-                    )
-            });
     }
 
 
     /* =========================================================
-       DISCOVER PRODUCT CANDIDATES
-       ========================================================= */
+       FIND PRODUCT BUTTONS
+    ========================================================= */
 
-    const CANDIDATE_SELECTOR = [
-        'salla-add-product-button',
-        'button[type="submit"]',
-        'button',
-        '[role="button"]',
-        'a[role="button"]',
-        '[class*="add-to-cart"]',
-        '[class*="add-cart"]',
-        '[class*="cart-button"]',
-        '[class*="stock"]',
-        '[class*="availability"]'
-    ].join(',');
-
-
-    function collectCandidates(root) {
-        const candidates =
-            new Set();
-
+    function findProductButtons(root) {
         if (!root) {
-            return candidates;
+            return [];
         }
 
+        const selector = `
+            salla-button[product-id],
+            salla-button[data-product-id],
+            salla-add-product-button[product-id],
+            salla-add-product-button[data-product-id]
+        `;
+
+        const result = [];
+
         if (
-            isElement(root) &&
-            root.matches(
-                CANDIDATE_SELECTOR
-            )
+            root.nodeType === 1 &&
+            isProductButton(root)
         ) {
-            candidates.add(root);
+            result.push(root);
         }
 
         if (
             root.querySelectorAll
         ) {
-            const elements =
-                root.querySelectorAll(
-                    CANDIDATE_SELECTOR
-                );
-
-            for (const element of elements) {
-                candidates.add(
-                    element
-                );
-            }
-        }
-
-        return candidates;
-    }
-
-
-    function collectContainers(root) {
-        const containers =
-            new Set();
-
-        const candidates =
-            collectCandidates(
-                root
-            );
-
-        for (const candidate of candidates) {
-            const container =
-                findProductContainer(
-                    candidate
-                );
-
-            if (container) {
-                containers.add(
-                    container
-                );
-            }
-        }
-
-        /*
-         * لو root نفسه يبدو كـ product container.
-         */
-        if (
-            isElement(root)
-        ) {
-            const directContainer =
-                findProductContainer(
-                    root
-                );
-
-            if (directContainer) {
-                containers.add(
-                    directContainer
-                );
-            }
-        }
-
-        return containers;
-    }
-
-
-    /* =========================================================
-       BATCH PROCESSING
-       ========================================================= */
-
-    function queueRoot(root) {
-        if (!root) {
-            return;
-        }
-
-        const containers =
-            collectContainers(
-                root
-            );
-
-        for (const container of containers) {
-            pendingContainers.add(
-                container
+            result.push(
+                ...root.querySelectorAll(
+                    selector
+                )
             );
         }
 
-        scheduleProcessing();
-    }
-
-
-    function scheduleProcessing() {
-        if (processTimer) {
-            return;
-        }
-
-        processTimer =
-            setTimeout(
-                async function () {
-                    processTimer = null;
-
-                    const batch =
-                        Array.from(
-                            pendingContainers
-                        );
-
-                    pendingContainers.clear();
-
-                    for (const container of batch) {
-                        await processProduct(
-                            container
-                        );
-                    }
-                },
-                0
-            );
+        return result;
     }
 
 
     /* =========================================================
        INITIAL SCAN
-       ========================================================= */
+    ========================================================= */
 
-    function initialScan() {
-        /*
-         * مرة واحدة فقط عند البداية.
-         *
-         * بعد ذلك لن نعمل scan للصفحة كلها.
-         */
-        queueRoot(
-            document.body
-        );
+    function scanProducts() {
+        const buttons =
+            findProductButtons(
+                document
+            );
+
+        for (const button of buttons) {
+            processProduct(button);
+        }
     }
 
 
     /* =========================================================
        MUTATION OBSERVER
-       ========================================================= */
+    ========================================================= */
 
     const observer =
         new MutationObserver(
             function (mutations) {
-                const roots =
-                    new Set();
-
                 for (const mutation of mutations) {
 
-                    /*
-                     * عناصر جديدة:
-                     * نعالج الجزء الجديد فقط.
-                     */
                     if (
                         mutation.type ===
                         'childList'
@@ -2210,23 +991,27 @@
                             of mutation.addedNodes
                         ) {
                             if (
-                                isElement(node)
+                                node.nodeType !== 1
                             ) {
-                                roots.add(
+                                continue;
+                            }
+
+                            const buttons =
+                                findProductButtons(
                                     node
+                                );
+
+                            for (
+                                const button
+                                of buttons
+                            ) {
+                                processProduct(
+                                    button
                                 );
                             }
                         }
                     }
 
-
-                    /*
-                     * تغيّر حالة زر شراء:
-                     * disabled / status / stock...
-                     *
-                     * نعالج الـ product container
-                     * الخاص به فقط.
-                     */
                     if (
                         mutation.type ===
                         'attributes'
@@ -2235,27 +1020,15 @@
                             mutation.target;
 
                         if (
-                            isElement(target)
+                            isProductButton(
+                                target
+                            )
                         ) {
-                            roots.add(
+                            processProduct(
                                 target
                             );
                         }
                     }
-                }
-
-                /*
-                 * لو مفيش حاجة جديدة،
-                 * مفيش شغل.
-                 */
-                if (!roots.size) {
-                    return;
-                }
-
-                for (const root of roots) {
-                    queueRoot(
-                        root
-                    );
                 }
             }
         );
@@ -2263,49 +1036,39 @@
 
     /* =========================================================
        START
-       ========================================================= */
+    ========================================================= */
 
     function start() {
         if (!document.body) {
             return;
         }
 
-        /*
-         * نراقب فقط التغييرات التي
-         * ممكن تغير حالة المنتج.
-         */
         observer.observe(
             document.body,
             {
                 childList: true,
                 subtree: true,
-
                 attributes: true,
-
                 attributeFilter: [
-                    'disabled',
-                    'aria-disabled',
+                    'product-id',
+                    'data-product-id',
                     'product-status',
-                    'status',
                     'data-product-status',
-                    'data-available',
-                    'data-in-stock',
-                    'data-stock',
-                    'data-quantity',
-                    'data-stock-status',
-                    'stock-status',
-                    'data-availability',
-                    'availability'
+                    'status',
+                    'amount',
+                    'disabled',
+                    'aria-disabled'
                 ]
             }
         );
 
-        /*
-         * Scan واحد فقط عند البداية.
-         */
-        initialScan();
+        scanProducts();
     }
 
+
+    /* =========================================================
+       BOOT
+    ========================================================= */
 
     if (
         document.readyState ===
